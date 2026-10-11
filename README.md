@@ -2,7 +2,7 @@
 
 > A machine learning project (supervised and semi-supervised) that predicts the mechanical properties of steel weld deposits from their chemical composition and welding parameters.
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-orange)
 ![Status](https://img.shields.io/badge/status-in%20progress-yellow)
 
@@ -23,8 +23,8 @@ This project aims to:
 **MAP_DATA_WELD**, a public database from the Phase Transformations Group at the University of Cambridge, compiled by T. Cool and H. K. D. H. Bhadeshia from the literature.
 
 - 🔗 [Database page](https://www.phase-trans.msm.cam.ac.uk/map/data/materials/welddb-b.html)
-- **1,651 rows** (weld deposits), **44 columns**
-- Files: `data/welddb.csv` (data) and `data/welddb.txt` (column descriptions)
+- **1,652 rows** (weld deposits), **44 columns**
+- Files: `data/welddb.data` (data) and `data/welddb.info` (column descriptions)
 
 | Variable group | Examples |
 |---|---|
@@ -77,27 +77,36 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 - RMSE, MAE, R² for regression
 - k-fold cross-validation (watch for data leakage between welds from the same source, see `Weld ID`)
 
-## 📁 Repository structure *(suggested)*
+## 📁 Repository structure
 
 ```
 .
 ├── data/
-│   ├── welddb.csv
-│   └── welddb.txt
+│   ├── welddb.data             # raw data
+│   └── welddb.info             # column descriptions
+├── doc/
+│   ├── 01_preprocessing_plan.md   # strategic choices and why
+│   └── 02_implementation.md       # how src/ works, corrections, open assumptions
+├── figures/exploration/        # figures saved by the exploration notebook
 ├── notebooks/
-│   ├── 01_exploration.ipynb
-│   ├── 02_preprocessing_pca.ipynb
-│   ├── 03_supervised_models.ipynb
-│   └── 04_semi_supervised.ipynb
+│   └── 01_exploration.ipynb    # (planned: PCA, supervised models, semi-supervised)
 ├── src/
-│   ├── preprocessing.py
-│   ├── models.py
-│   └── evaluation.py
+│   ├── config.py               # every cleaning / feature rule, with its rationale
+│   ├── loading.py              # read the raw file, derive the study group `source`
+│   ├── cleaning.py             # text -> typed numeric data
+│   ├── preprocessing.py        # per-target features, tree / linear preprocessors
+│   ├── evaluation.py           # identical folds, one score per target
+│   ├── semi_supervised.py      # pseudo-labeling regressor
+│   └── analysis.py             # within-study correlations
+├── tests/
 ├── report/
-│   └── report.pdf
 ├── requirements.txt
 └── README.md
 ```
+
+Design choices (study-grouped validation, missing-value handling, cleaning rules) are
+documented in [`doc/01_preprocessing_plan.md`](doc/01_preprocessing_plan.md) and
+[`doc/02_implementation.md`](doc/02_implementation.md).
 
 ## 🚀 Getting started
 
@@ -113,11 +122,14 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
+# Run the tests
+python -m pytest
+
 # Launch the notebooks
 jupyter notebook
 ```
 
-Main dependencies: `pandas`, `numpy`, `scikit-learn`, `matplotlib`, `seaborn`, `jupyter`.
+Main dependencies: `pandas`, `numpy`, `scikit-learn` (1.6 or later), `matplotlib`, `seaborn`, `missingno`, `jupyter`, `pytest`.
 
 ## 📈 Results
 
