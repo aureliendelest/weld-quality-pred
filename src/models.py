@@ -18,11 +18,11 @@ class GroupTunedRidge(RegressorMixin, BaseEstimator):
         self.alphas = alphas
         self.n_splits = n_splits
 
-    def fit(self, X, y, groups):
+    def fit(self, X, y, groups, sample_weight=None):
         n_splits = min(self.n_splits, len(np.unique(groups)))
         search = GridSearchCV(Ridge(), {"alpha": list(self.alphas)}, cv=GroupKFold(n_splits),
                               scoring="neg_mean_squared_error")
-        search.fit(X, y, groups=groups)
+        search.fit(X, y, groups=groups, sample_weight=sample_weight)
         self.model_, self.alpha_ = search.best_estimator_, search.best_params_["alpha"]
         return self
 

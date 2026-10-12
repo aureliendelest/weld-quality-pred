@@ -8,7 +8,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = PROJECT_ROOT / "data" / "welddb.data"
 FIGURES_DIR = PROJECT_ROOT / "figures"      # one subfolder per notebook
-RESULTS_DIR = PROJECT_ROOT / "results"      # fold-level and summary tables (CSV)
+RESULTS_DIR = PROJECT_ROOT / "results"      # one subfolder per notebook: fold-level and summary tables (CSV)
 
 # --------------------------------------------------------------------------
 # Raw columns (order of welddb.data, see data/welddb.info)
@@ -153,3 +153,26 @@ N_SPLITS = 5
 # held-out study needs this many labeled rows for a target to be scored.
 LOSO_MIN_ROWS = 20
 SOURCE_COLUMN = "source"
+
+# --------------------------------------------------------------------------
+# Ablations and comparison rule (doc/04_ablation_plan.md)
+# --------------------------------------------------------------------------
+TENSILE_TARGETS = ["yield_strength_mpa", "uts_mpa", "elongation_pct", "reduction_of_area_pct"]
+
+# Derived features, computed row by row from inputs (nothing is fitted, so nothing can leak).
+DERIVED_FEATURES = {
+    "ce_iiw": "carbon equivalent C + Mn/6 + (Cr+Mo+V)/5 + (Ni+Cu)/15; NaN when an element is not "
+              "reported (a missing element is not zero), so only ~25% of the rows have it",
+    "larson_miller": "tempering parameter (T + 273.15) * (20 + log10 t) for the post-weld heat "
+                     "treatment; 0 for an as-welded deposit (PWHT temperature 0)",
+}
+
+# A model beats another when it gains at least MIN_SKILL_GAIN of skill on average over the
+# held-out studies AND wins on at least MIN_WIN_SHARE of them (paired by study); otherwise it is a tie.
+MIN_SKILL_GAIN = 0.05
+MIN_WIN_SHARE = 2 / 3
+ABLATION_SEEDS = (0, 1, 2, 3, 4)       # repeats of the 5-fold grouped protocol
+
+# (study, target) pairs where skill measures nothing: the study's spread is so small that the
+# training mean is already within a fraction of it (std 3.0 against 9.1 elsewhere, notebook 03, 2.0).
+EXCLUDED_FROM_JUDGMENT = {("Cunh", "reduction_of_area_pct")}

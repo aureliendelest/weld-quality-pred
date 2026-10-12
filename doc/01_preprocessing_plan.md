@@ -109,6 +109,8 @@ invent measurements a study never made, while the flag preserves "this study
 did not measure it", which can itself be informative. MICE / regression
 imputation was ruled out for the same reason (false precision).
 
+**Checked by ablation (notebook 03, 2.1)**: for trees the flags change nothing (0.00-0.01 under every protocol, the NaN are readable directly); for the ridge removing the missing flags costs 0.03-0.07 of skill, more on a new study than on a seen one. They stay for both.
+
 ## 6. Cleaning rules
 
 | Rule | Decision | Why |
@@ -201,6 +203,12 @@ unknown; tests in `tests/` pin the key counts.
 50%), so there is no "75% empty" noise to filter. The sparsest rows all come from
 one study, and a threshold would remove a whole study, which is a bias.
 
+## 13. Comparison rule
+
+**Decision**: a model or variant beats another when, paired by held-out study (leave-one-study-out), its mean skill gain is at least 0.05 and it wins on at least two thirds of the (target, study) pairs; otherwise it is a tie. The four tensile targets are pooled, Charpy is read on its own, and (`Cunh`, reduction of area) is left out. `random` and `grouped_weld` are context.
+
+**Why**: 5-7 studies per target and a skill that moves by 0.03-0.16 between two seeds of the grouped protocol: a mean difference alone cannot be told from noise. Details and results of the feature-set ablations: `04_ablation_plan.md`.
+
 ## Summary
 
 | # | Issue | Decision |
@@ -216,11 +224,13 @@ one study, and a threshold would remove a whole study, which is a bias.
 | 9 | Evaluation | One score per target on its own rows |
 | 10 | Semi-supervised | Pool per target, same folds as the baseline |
 | 12 | Rows | No removal; sensitivity run |
+| 13 | Comparison | Paired by study: gain >= 0.05 and >= 2/3 wins, otherwise a tie |
 
 ## Status
 
 `src/` implements this plan: `config.py`, `loading.py`, `cleaning.py`,
-`preprocessing.py`, `evaluation.py`, `semi_supervised.py`; tests in `tests/`.
+`preprocessing.py`, `evaluation.py`, `baselines.py`, `models.py`, `ablation.py`, `semi_supervised.py`; tests in `tests/`.
+The feature set was checked by ablation (`04_ablation_plan.md`): the plan above is kept unchanged.
 See [`02_implementation.md`](02_implementation.md) for how the code works, the
 corrections made during implementation, and the assumptions still unverified.
 See [`03_project_structure.md`](03_project_structure.md) for the notebook roadmap and what

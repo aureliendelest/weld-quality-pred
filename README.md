@@ -69,13 +69,14 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 - Scale / standardize features (very heterogeneous ranges)
 - PCA to explore the structure of the data
 
-### Models *(adapt to your actual work)*
-- **Supervised**: regularized linear regression (Ridge/Lasso), k-NN, SVR, Random Forest, Gradient Boosting, MLP
-- **Semi-supervised**: Self-training, Label Propagation / Label Spreading, co-training *(to be specified)*
+### Models
+- **Supervised**: random forest and a study-tuned ridge are done (reference models); Lasso, k-NN, SVR, histogram gradient boosting and MLP are next, with hyperparameters tuned by cross-validation over studies inside the training fold.
+- **Semi-supervised**: confidence-ranked pseudo-labeling (`src/semi_supervised.py`) is written; a transductive variant (unlabeled rows of the held-out study) and a second method for regression (co-training) are planned. They are compared with their supervised base on identical folds.
 
-### Metrics *(adapt to your actual work)*
-- RMSE, MAE, R² for regression
-- k-fold cross-validation (watch for data leakage between welds from the same source, see `Weld ID`)
+### Metrics and validation
+- RMSE, MAE and R² in physical units, plus the **skill** = 1 - SSE(model) / SSE(training-fold mean): R² compares with the mean of the *test* fold and the training-mean predictor already scores R² of -0.37 to -2.9 on an unseen study.
+- Every model runs on identical folds under `grouped` (whole studies held out, repeated on 5 seeds), `loso` (one study at a time, the decision protocol) and `random` (contrast only: it largely measures how well a study is recognised). `grouped_weld` (same weld, any Charpy temperature, kept whole) is a diagnostic.
+- Comparison rule, paired by held-out study: a gain of at least 0.05 of skill **and** wins on at least two thirds of the (target, study) pairs, otherwise a tie (`doc/04_ablation_plan.md`).
 
 ## 📁 Repository structure
 
@@ -87,14 +88,16 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 ├── doc/
 │   ├── 01_preprocessing_plan.md   # strategic choices and why
 │   ├── 02_implementation.md       # how src/ works, corrections, open assumptions
-│   └── 03_project_structure.md    # notebook roadmap and decisions for the next stages
+│   ├── 03_project_structure.md    # notebook roadmap and decisions for the next stages
+│   └── 04_ablation_plan.md        # feature-set ablations and the decision rule
 ├── figures/                    # one subfolder per notebook (exploration/, preprocessing_pca/)
 ├── notebooks/
 │   ├── 01_exploration.ipynb         # raw data, frozen
 │   ├── 02_preprocessing_pca.ipynb   # cleaning effects and PCA
-│   ├── 03_supervised_models.ipynb   # baselines and per-study scores (started)
-│   └── ...                          # planned: 04 semi-supervised, 05 comparison
-├── results/                    # CSV tables written by the notebooks
+│   ├── 03_supervised_models.ipynb   # baselines, per-study scores, feature-set ablations (started)
+│   ├── 04_semi_supervised.ipynb     # planned
+│   └── 05_comparison_recommendations.ipynb   # planned
+├── results/                    # CSV tables written by the notebooks, one subfolder per notebook
 ├── src/
 │   ├── config.py               # every cleaning / feature rule, with its rationale
 │   ├── loading.py              # read the raw file, derive the study group `source`
@@ -103,6 +106,7 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 │   ├── evaluation.py           # identical folds, one score per target
 │   ├── baselines.py            # global-mean and study-mean reference predictors
 │   ├── models.py               # study-tuned ridge
+│   ├── ablation.py             # feature-set ablations and the paired decision rule
 │   ├── semi_supervised.py      # pseudo-labeling regressor
 │   └── analysis.py             # within-study correlations, PCA helpers
 ├── tests/
@@ -140,11 +144,22 @@ Main dependencies: `pandas`, `numpy`, `scikit-learn` (1.6 or later), `matplotlib
 
 ## 📈 Results
 
-*To be completed: model comparison table (metrics, cross-validation standard deviations) and key figures (PCA, feature importance, predicted vs. actual values).*
+*Work in progress: the model zoo, the semi-supervised comparison and the final table are not done yet. What is established so far (notebook 03, `results/supervised_models/`):*
 
-| Model | RMSE | MAE | R² |
-|---|---|---|---|
-| … | … | … | … |
+Skill against the training-fold mean (0 = predicts that mean), 5 targets, by protocol:
+
+| Target | Forest random | Forest grouped | Forest leave-one-study-out | Ridge leave-one-study-out |
+|---|---|---|---|---|
+| Yield strength | 0.82 | 0.28 | 0.30 | 0.01 |
+| UTS | 0.86 | 0.42 | 0.39 | 0.15 |
+| Elongation | 0.74 | 0.28 | -0.06 | -0.38 |
+| Reduction of area | 0.74 | 0.29 | 0.09 | -0.23 |
+| Charpy toughness | 0.83 | 0.16 | 0.22 | -0.02 |
+
+- Strength transfers to a study never seen (the forest beats the mean on 6 of 7 studies for yield strength, 7 of 7 for UTS); ductility and toughness are less reliable.
+- The random protocol is far more flattering: knowing only the study already gives 25-74% of the forest's random skill.
+- Feature-set ablations (36 ties out of 38 comparisons): the baseline feature set is kept; the skill of the grouped protocol moves by 0.03-0.16 between seeds, the size of the gains looked for.
+- Charpy toughness needs reformulating: 514 of 879 values are 28, 35, 50, 70 or 100 J, probably the temperature at which a fixed energy is reached (to be checked in the source papers).
 
 ## 💡 Recommendations
 

@@ -193,6 +193,20 @@ def test_leave_one_study_out_folds_hold_out_one_study_each(clean):
         assert not set(clean["source"].iloc[train]) & set(clean["source"].iloc[test])
 
 
+def test_weld_folds_keep_a_weld_whole_but_not_a_study(clean):
+    from src.evaluation import make_folds, weld_fingerprint
+    fingerprint = weld_fingerprint(clean)
+    assert fingerprint.nunique() < len(clean)               # replicated inputs exist
+    folds = make_folds(clean, "grouped_weld")
+    shared_study = False
+    for train, test in folds:
+        assert not set(fingerprint.iloc[train]) & set(fingerprint.iloc[test])
+        shared_study |= bool(set(clean["source"].iloc[train]) & set(clean["source"].iloc[test]))
+    assert shared_study                                      # unlike "grouped", studies are split
+    again = make_folds(clean, "grouped_weld")
+    assert all((a[1] == b[1]).all() for a, b in zip(folds, again))
+
+
 def test_per_study_scores_report_one_row_per_study_and_model(baseline_results):
     from src.evaluation import per_study_scores
     table = per_study_scores(baseline_results)
@@ -221,3 +235,82 @@ def test_group_tuned_ridge_picks_a_penalty_from_its_grid():
     model = GroupTunedRidge().fit(X, y, groups=groups)
     assert model.alpha_ in model.alphas
     assert model.predict(X, groups=groups).shape == (120,) and np.corrcoef(model.predict(X), y)[0, 1] > 0.9
+
+
+# ---- ablation options and decision rule --------------------------------------
+def test_feature_options_change_the_feature_set(clean):
+    from src.preprocessing import FeatureOptions, add_derived
+    target = "yield_strength_mpa"
+    base = feature_spec(clean, target)
+    no_mo = feature_spec(clean, target, FeatureOptions(drop=("mo_conc_wt",)))
+    assert "mo_conc_wt" not in no_mo.numeric and "mo_conc_wt_censored" not in no_mo.censored_flags
+    assert len(no_mo.numeric) == len(base.numeric) - 1
+    assert feature_spec(clean, target, FeatureOptions(censored_flags=False)).censored_flags == []
+    with pytest.raises(ValueError):
+        feature_spec(clean, target, FeatureOptions(drop=("yield_strength_mpa",)))
+    frame = add_derived(clean, ("ce_iiw", "larson_miller"))
+    assert "ce_iiw" in feature_spec(frame, target, FeatureOptions(extra=("ce_iiw",))).numeric
+    assert (frame.loc[clean["pwht_temp_c"] == 0, "larson_miller"] == 0).all()
+    assert frame["ce_iiw"].notna().sum() == clean[["c_conc_wt", "mn_conc_wt", "cr_conc_wt", "mo_conc_wt",
+                                                   "v_conc_wt", "ni_conc_wt", "cu_conc_wt"]].dropna().shape[0]
+
+
+def test_option_preprocessors_fit_on_the_training_fold(clean):
+    from src.preprocessing import FeatureOptions, build_preprocessor
+    target = "yield_strength_mpa"
+    spec = feature_spec(clean, target)
+    X = clean[spec.columns]
+    no_flags = build_preprocessor("tree", spec, options=FeatureOptions(missing_flags=False)).fit(X)
+    assert not any(c.endswith("_missing") for c in no_flags.transform(X).columns)
+    with_pca = build_preprocessor("tree", spec, options=FeatureOptions(pca_components=3)).fit(X.iloc[:800])
+    out = with_pca.transform(X.iloc[800:])
+    assert [c for c in out.columns if c.startswith("pca_")] == ["pca_1", "pca_2", "pca_3"]
+    assert not out[["pca_1", "pca_2", "pca_3"]].isna().any().any() and len(out) == len(X) - 800
+
+
+def test_study_weights_have_mean_one_and_favour_small_studies():
+    from src.evaluation import study_sample_weights
+    weights = study_sample_weights(["big"] * 90 + ["small"] * 10)
+    assert weights.mean() == pytest.approx(1.0) and weights[-1] > weights[0]
+
+
+def test_paired_decision_needs_gain_and_wins():
+    from src.ablation import paired_decision
+    studies = [f"s{i}" for i in range(6)]
+
+    def loso(variant, skills):
+        return pd.DataFrame({"protocol": "loso", "algo": "a", "variant": variant, "target": "uts_mpa",
+                             "study": studies, "skill": skills, "within_rho": 0.0})
+    base = [0.1] * 6
+    helps = pd.concat([loso("baseline", base), loso("v", [0.3] * 6)])
+    assert paired_decision(helps, "a", "v")["verdict"].iloc[0] == "helps"
+    one_big_win = pd.concat([loso("baseline", base), loso("v", [1.1, 0.1, 0.1, 0.1, 0.1, 0.0])])
+    assert paired_decision(one_big_win, "a", "v")["verdict"].iloc[0] == "tie"      # mean gain, but 1 win of 6
+    hurts = pd.concat([loso("baseline", base), loso("v", [-0.2] * 6)])
+    assert paired_decision(hurts, "a", "v")["verdict"].iloc[0] == "hurts"
+
+
+def test_excluded_pair_is_left_out_of_the_decision():
+    from src.ablation import paired_decision
+    rows = []
+    for variant, skill in (("baseline", -2.0), ("v", 0.0)):
+        rows.append({"protocol": "loso", "algo": "a", "variant": variant, "target": "reduction_of_area_pct",
+                     "study": "Cunh", "skill": skill, "within_rho": 0.0})
+        rows.append({"protocol": "loso", "algo": "a", "variant": variant, "target": "reduction_of_area_pct",
+                     "study": "Evans", "skill": 0.3, "within_rho": 0.0})
+    assert paired_decision(pd.DataFrame(rows), "a", "v")["n_pairs"].iloc[0] == 1
+
+
+def test_loso_deltas_and_seed_spread():
+    from src.ablation import grouped_seed_spread, loso_deltas
+    rows = []
+    for variant, skill in (("baseline", 0.1), ("v", 0.4)):
+        for study in ("a", "b"):
+            rows.append({"protocol": "loso", "algo": "m", "variant": variant, "target": "uts_mpa",
+                         "study": study, "skill": skill})
+        for seed in (0, 1):
+            rows.append({"protocol": "grouped", "algo": "m", "variant": variant, "target": "uts_mpa",
+                         "study": None, "skill": skill + 0.1 * seed, "seed": seed})
+    results = pd.DataFrame(rows)
+    assert loso_deltas(results, "m", "v")["uts_mpa"].tolist() == pytest.approx([0.3, 0.3])
+    assert grouped_seed_spread(results).loc[("m", "uts_mpa"), "skill_std"] == pytest.approx(0.1 / np.sqrt(2))

@@ -12,13 +12,14 @@ describes the code.
 | `src/config.py` | **Single registry of rules**: column lists, targets, excluded columns, censoring / unit-fix / range / nitrogen / hardness rules, weld-type merges, source-group rules, thresholds (`MISSING_FLAG_MIN_RATE`, `N_SPLITS`, `RANDOM_SEED`). Every rule has a one-line rationale. |
 | `src/loading.py` | `load_raw()` reads `data/welddb.data` as **text** (`N` becomes NaN, nothing else does) and adds `source`; `derive_source()` applies the grouping rules. |
 | `src/cleaning.py` | `clean_dataframe(raw, censored_factor=0.5)` turns text into typed numbers, driven by the registry (`censored_factor=None` keeps censored values as NaN, for sensitivity analyses). Parsers **raise** on any unknown notation instead of producing a silent NaN. |
-| `src/preprocessing.py` | `feature_spec()` (per-target features with leakage guards), `MissingnessFlags`, `LogShift`, `build_preprocessor()` / `build_pipeline()` for the `tree` and `linear` families. |
-| `src/evaluation.py` | `make_folds()` (protocols `grouped`, `random`, `loso` = one held-out study at a time), `evaluate_model()`, `compare_models()`, `summarize()`, `protocol_gap()`, `per_study_scores()`, `unlabeled_pool()`. Every fold reports R2, RMSE, MAE, `skill` (error reduction against the training-fold mean), `bias` and `within_rho` (Spearman inside a study). |
+| `src/preprocessing.py` | `feature_spec()` (per-target features with leakage guards), `MissingnessFlags`, `LogShift`, `build_preprocessor()` / `build_pipeline()` for the `tree` and `linear` families. `FeatureOptions` (flags on/off, dropped features, derived features, extra shifted logs, PCA scores fitted inside the training fold) and `add_derived()` (carbon equivalent, Larson-Miller parameter) serve the ablations; the defaults reproduce the plan. |
+| `src/evaluation.py` | `make_folds()` (protocols `grouped`, `random`, `loso` = one held-out study at a time, and the opt-in diagnostic `grouped_weld` = same weld, any Charpy temperature, kept whole through `weld_fingerprint()`), `study_sample_weights()`, `evaluate_model()`, `compare_models()`, `summarize()`, `protocol_gap()`, `per_study_scores()`, `unlabeled_pool()`. Every fold reports R2, RMSE, MAE, `skill` (error reduction against the training-fold mean), `bias` and `within_rho` (Spearman inside a study). |
 | `src/baselines.py` | `StudyMeanRegressor` and `baseline_models()`: the global mean and the study mean every model has to beat. |
-| `src/models.py` | `GroupTunedRidge`: a ridge whose penalty is chosen by cross-validation over whole studies of the training rows (a plain `RidgeCV` would pick a weak penalty because rows of one study look alike). |
+| `src/models.py` | `GroupTunedRidge`: a ridge whose penalty is chosen by cross-validation over whole studies of the training rows (a plain `RidgeCV` would pick a weak penalty because rows of one study look alike). Accepts `sample_weight`. |
+| `src/ablation.py` | The feature-set ablations (`VARIANTS`, one change at a time) on two reference models, `run_ablation()`, and the agreed decision rule: `paired_decision()` (paired by held-out study: gain >= 0.05 and wins on >= 2/3 of the pairs, otherwise a tie), `decision_table()`, `loso_deltas()`, `grouped_seed_spread()`. Plan: `04_ablation_plan.md`. |
 | `src/semi_supervised.py` | `PseudoLabelRegressor`, a minimal confidence-ranked pseudo-labeling wrapper. |
 | `src/analysis.py` | `source_demeaned_correlations()` (within-study correlation, 4.E), `eta_squared()` (variance explained by a group, adjusted), `parallel_analysis()` (components above noise), `standardise_for_pca()` and `pca_report()` (notebook 02). |
-| `tests/test_cleaning.py` | 27 tests (parsers, censoring factor, real-data counts, leakage guards, folds, within-source correlation, eta-squared, parallel analysis). |
+| `tests/test_cleaning.py` | 34 tests (parsers, censoring factor, real-data counts, leakage guards, folds including `grouped_weld`, within-source correlation, eta-squared, parallel analysis, ridge, feature options, ablation decision rule). |
 
 Data flow:
 
@@ -89,7 +90,7 @@ rule change would move.
 
 ## 4. Verification
 
-- **Tests**: 27 pass. They pin: all numeric columns numeric, NaN counts unchanged,
+- **Tests**: 34 pass (run them with the project's `.venv`: the default `python3` of the machine has scikit-learn 1.5, which has no `GroupKFold(shuffle=True)`). They pin: all numeric columns numeric, NaN counts unchanged,
   `n_conc_ppm` 1242 non-null, hardness 138, `b_conc_ppm` 419 censored, 33 source
   groups, weld-type levels (`MMA` 1180), `charpy_temp_c` only in the toughness
   features, no target in any feature set, grouped folds never share a source, folds
@@ -138,6 +139,9 @@ Found while implementing and re-running the exploration:
 | `current_a` / `voltage_v` have a real Pearson / Spearman divergence (4.B) | It came mostly through their pairs with `co_conc_wt`; they are not in the top 10 on cleaned data (notebook 02, 1.3) |
 | Only 134 rows have all targets, so a joint model is out | 650 rows have all four tensile targets; 134 is the effect of Charpy toughness (notebook 02, 2.8) |
 | The variance partition of each input is a direct guide for choosing variables | The study share of an input does not predict whether its target correlations survive within a study (Spearman -0.09); screening stays on the within-study coefficient (notebook 02, 2.8) |
+| The missing / censored flags are study fingerprints: they help in the random protocol and not on a new study (notebook 02, 2.4) | For the forest they change nothing (0.00-0.01 under every protocol); for the ridge removing the missing flags costs 0.03 (random), 0.04 (grouped), 0.07 (leave-one-study-out). They are information, not study recognition (notebook 03, 2.1) |
+| 100 J in Charpy toughness is a test ceiling (notebook 01, 4.A) | Not a ceiling: 169 values exceed it. 514 of 879 values are 28, 35, 50, 70 or 100 J, probably a temperature reached at a fixed energy (to check in the sources) (notebook 03, `03_project_structure.md`) |
+| Reduction of area is capped near 80% | No pile on a value (max 83): a physical saturation, not censoring |
 | The random protocol leaks because rows are replicated (53% of rows share an input vector) | Measured on labeled rows: only 10-11% of tensile rows have a labeled twin; for Charpy 70% are the same weld at another temperature, 4% at the same temperature (notebook 02, 2.7) |
 
 ## 6. Assumptions that are not verified
@@ -164,10 +168,13 @@ Found while implementing and re-running the exploration:
   propagation or co-training are not implemented.
 - The within-source coefficient assumes a similar slope in every study and rests on few
   studies for some pairs (for example boron vs UTS: 45 rows, 4 studies).
-- Not written yet: `models.py`, the rest of notebook 03 and notebooks 04-05, hyperparameter search, the 32-row
-  `EvHtIp1979` sensitivity run, and the model comparison table of the README. A third
-  validation protocol (grouped by input fingerprint) is proposed in notebook 02 but not
-  implemented: it changes the evaluation design and awaits the user's agreement.
+- Not written yet: the model zoo and hyperparameter search (notebook 03, section 3), notebooks 04-05, the 32-row
+  `EvHtIp1979` sensitivity run, the Charpy reformulation (waits for the source papers) and the model comparison
+  table of the README. Done since the first version: `models.py`, the `grouped_weld` protocol (a diagnostic, opt-in) and
+  the feature-set ablations (`04_ablation_plan.md`).
+- Rule amendment awaiting agreement: "a tie keeps the baseline" instead of "a tie keeps the simpler setting" (`04_ablation_plan.md`).
+- `GroupKFold(shuffle=True)` makes the grouped folds depend on the seed; the skill of the 5-fold grouped protocol moves by
+  0.03-0.16 between seeds, so ablations repeat it on 5 seeds and the decision rests on leave-one-study-out.
 - PCA findings that constrain the models: every leading component is mostly a study axis
   (adjusted eta-squared of PC1 against `source` 0.65-0.97), and the 25 numeric inputs are
   not compressible (80% of the variance needs 12 components). See `03_project_structure.md`.

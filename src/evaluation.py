@@ -4,6 +4,9 @@ Protocols, always run on identical folds:
 - "grouped": GroupKFold by source (generalisation to an unseen study)
 - "random":  stratified shuffled KFold (in-distribution performance)
 - "loso":    one fold per study with enough rows (leave one study out), for a score per study
+- "grouped_weld": GroupKFold by input fingerprint (the same weld, any Charpy temperature, stays on one
+             side). Not for ranking models: random - grouped_weld is the leak through twin rows, and
+             grouped_weld - grouped is the cost of a new study.
 A model is fit and scored per target on the rows where that target exists.
 
 Besides R2 (which compares with the mean of the *test* fold, a value nobody knows in
@@ -18,11 +21,15 @@ import pandas as pd
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import GroupKFold, StratifiedKFold
 
-from .config import LOSO_MIN_ROWS, N_SPLITS, RANDOM_SEED, SCALED_CLIP, SOURCE_COLUMN, TARGETS
-from .preprocessing import build_preprocessor, feature_spec
+from .config import (
+    CATEGORICAL_FEATURES, LOSO_MIN_ROWS, N_SPLITS, NUMERIC_FEATURES, RANDOM_SEED, SCALED_CLIP,
+    SOURCE_COLUMN, TARGETS,
+)
+from .preprocessing import FeatureOptions, add_derived, build_preprocessor, feature_spec
 
 PROTOCOLS = ("grouped", "random")            # the default pair
 ALL_PROTOCOLS = PROTOCOLS + ("loso",)
+KNOWN_PROTOCOLS = ALL_PROTOCOLS + ("grouped_weld",)   # grouped_weld is opt-in (a diagnostic, not a ranking protocol)
 MIN_TEST_ROWS = 10          # a fold with fewer labeled test rows gives a meaningless R2
 METRICS = ["r2", "rmse", "mae", "skill", "bias", "within_rho"]
 
@@ -35,6 +42,18 @@ class ModelSpec:
     semi_supervised: bool = False      # estimator.fit(X, y, X_unlabeled=...)
     uses_source: bool = False          # estimator.fit(X, y, groups=...) and predict(X, groups=...)
     clip: float | None = SCALED_CLIP   # bound on the scaled features (linear family only)
+    options: FeatureOptions = FeatureOptions()   # feature-set variant (ablations)
+    study_weights: bool = False        # estimator.fit(..., sample_weight=1/sqrt(rows of the study))
+
+
+def weld_fingerprint(df: pd.DataFrame) -> pd.Series:
+    """Integer id of the full input vector (numeric + categorical features, no test condition).
+
+    Rows with the same id are the same weld: replicates, or one weld read at several Charpy
+    temperatures. NaN is part of the vector (two rows missing the same fields can match).
+    """
+    columns = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+    return df.groupby(columns, dropna=False, sort=False).ngroup()
 
 
 def make_folds(df: pd.DataFrame, protocol: str, n_splits: int = N_SPLITS, seed: int = RANDOM_SEED):
@@ -53,7 +72,17 @@ def make_folds(df: pd.DataFrame, protocol: str, n_splits: int = N_SPLITS, seed: 
         labels = df[SOURCE_COLUMN].to_numpy()
         return [(positions[labels != study], positions[labels == study])
                 for study in sorted(sizes[sizes >= LOSO_MIN_ROWS].index)]
-    raise ValueError(f"protocol must be one of {ALL_PROTOCOLS}")
+    if protocol == "grouped_weld":
+        splitter = GroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        return list(splitter.split(positions, groups=weld_fingerprint(df)))
+    raise ValueError(f"protocol must be one of {KNOWN_PROTOCOLS}")
+
+
+def study_sample_weights(studies) -> np.ndarray:
+    """1/sqrt(rows of the study), scaled to a mean of 1: a large study counts less per row."""
+    studies = pd.Series(np.asarray(studies))
+    weights = 1.0 / np.sqrt(studies.map(studies.value_counts()).to_numpy(dtype=float))
+    return weights * len(weights) / weights.sum()
 
 
 def unlabeled_pool(df: pd.DataFrame, target: str) -> pd.Index:
@@ -87,9 +116,10 @@ def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARG
     """One row per (target, protocol, fold) with the metrics of METRICS on the labeled test rows."""
     rows = []
     source = df[SOURCE_COLUMN]
+    frame = add_derived(df, model.options.extra)
     for target in targets:
-        spec = feature_spec(df, target)
-        X, y = df[spec.columns], df[target]
+        spec = feature_spec(frame, target, model.options)
+        X, y = frame[spec.columns], frame[target]
         labeled = y.notna().to_numpy()
         for protocol, protocol_folds in folds.items():
             min_test = LOSO_MIN_ROWS if protocol == "loso" else MIN_TEST_ROWS
@@ -97,7 +127,7 @@ def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARG
                 train_labeled, test_labeled = train[labeled[train]], test[labeled[test]]
                 if len(test_labeled) < min_test:
                     continue
-                preprocessor = build_preprocessor(model.family, spec, clip=model.clip).fit(X.iloc[train_labeled])
+                preprocessor = build_preprocessor(model.family, spec, clip=model.clip, options=model.options).fit(X.iloc[train_labeled])
                 estimator = model.factory()
                 X_train = preprocessor.transform(X.iloc[train_labeled])
                 unlabeled = train[~labeled[train]]
@@ -106,6 +136,8 @@ def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARG
                     fit_args["X_unlabeled"] = preprocessor.transform(X.iloc[unlabeled])
                 if model.uses_source:
                     fit_args["groups"] = source.iloc[train_labeled].to_numpy()
+                if model.study_weights:
+                    fit_args["sample_weight"] = study_sample_weights(source.iloc[train_labeled])
                 estimator.fit(X_train, y.iloc[train_labeled], **fit_args)
                 predict_args = {"groups": source.iloc[test_labeled].to_numpy()} if model.uses_source else {}
                 predicted = np.asarray(estimator.predict(preprocessor.transform(X.iloc[test_labeled]), **predict_args))
