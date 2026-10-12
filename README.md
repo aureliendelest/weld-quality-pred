@@ -167,8 +167,7 @@ Skill against the training-fold mean (0 = predicts that mean), 5 targets, by pro
 
 ## 👥 Team
 
-- **Team no.**: _to be completed_
-- **Members**: _First Last (email)_, _First Last (email)_
+- **Members**: Aurélien Delest, Antoine Loudier
 
 ## 📚 References
 
