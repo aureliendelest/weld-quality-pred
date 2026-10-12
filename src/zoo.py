@@ -18,7 +18,7 @@ from .ablation import VARIANTS, paired_decision
 from .baselines import baseline_models
 from .config import ABLATION_SEEDS, EXCLUDED_FROM_JUDGMENT, TARGETS, TENSILE_TARGETS
 from .evaluation import ModelSpec, evaluate_model, make_folds
-from .models import GroupTunedRidge, GroupTunedSearch
+from .models import GroupTunedCatBoost, GroupTunedRidge, GroupTunedSearch
 
 REFERENCES = ("random forest", "ridge (study-tuned)")
 BOOSTING = ("hist gradient boosting", "xgboost", "catboost")      # always checked on the grouped protocol
@@ -138,3 +138,30 @@ def run_option_one(df: pd.DataFrame, out_dir, rerun: bool = False, k: int = 3, a
     loso = stage(loso_file, list(models), protocols=("loso",))
     grouped = stage(grouped_file, list(dict.fromkeys([*retained(loso, k), *also_grouped])), protocols=("grouped",), seeds=ABLATION_SEEDS)
     return loso, grouped
+
+
+TUNED_ROUNDS = "catboost (rounds tuned)"
+
+
+def tuned_rounds_model(max_rounds: int = 600) -> ModelSpec:
+    """CatBoost with the depth, the L2 penalty and the number of rounds chosen by cross-validation over studies.
+
+    The learning rate is fixed at 0.05 and the rounds are read off the validation curve up to `max_rounds`.
+    """
+    grid = {"depth": [4, 6], "l2_leaf_reg": [3, 10]}
+    return ModelSpec(TUNED_ROUNDS, "tree", lambda: GroupTunedCatBoost(grid, max_rounds=max_rounds), uses_source=True)
+
+
+def run_tuned_rounds(df: pd.DataFrame, out_dir, rerun: bool = False, max_rounds: int = 600, log=None):
+    """Leave-one-study-out, then `grouped` (5 seeds), for the CatBoost with tuned rounds; saved tables are reused."""
+    spec = tuned_rounds_model(max_rounds)
+    tables = []
+    for name, protocol, seeds in (("loso", "loso", (0,)), ("grouped", "grouped", ABLATION_SEEDS)):
+        file = out_dir / f"03_catboost_rounds_{name}_folds.csv"
+        if file.exists() and not rerun:
+            tables.append(pd.read_csv(file))
+            continue
+        table = run_zoo(df, [spec], protocols=(protocol,), seeds=seeds, log=log)
+        table.to_csv(file, index=False)
+        tables.append(table)
+    return tuple(tables)

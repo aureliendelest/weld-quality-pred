@@ -13,6 +13,7 @@ Besides R2 (which compares with the mean of the *test* fold, a value nobody know
 advance), every row reports `skill`: 1 - SSE(model) / SSE(training-fold mean). A model
 that only predicts the training mean has a skill of exactly 0.
 """
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -149,6 +150,7 @@ def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARG
                     "study": source.iloc[test[0]] if protocol == "loso" else None,
                     "n_train": len(train_labeled), "n_test": len(test_labeled),
                     "n_unlabeled": len(unlabeled) if model.semi_supervised else 0,
+                    "chosen": json.dumps(estimator.chosen_, sort_keys=True) if hasattr(estimator, "chosen_") else None,
                     "r2": r2_score(truth, predicted),
                     "rmse": root_mean_squared_error(truth, predicted),
                     "mae": mean_absolute_error(truth, predicted),

@@ -411,3 +411,29 @@ def test_boosting_models_share_the_protocol_and_keep_the_nan():
     grids = {n: models[n].factory().grid for n in BOOSTING}
     assert {len(np.prod([len(v) for v in g.values()]).reshape(1)) for g in grids.values()} == {1}
     assert {int(np.prod([len(v) for v in g.values()])) for g in grids.values()} == {8}       # same budget for the three
+
+
+# ---- hyperparameter optimisation -------------------------------------------------
+def test_group_tuned_catboost_reads_the_rounds_off_the_validation_curve():
+    from src.models import GroupTunedCatBoost
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(150, 3)), columns=list("abc"))
+    y = 300 + 40 * X["a"] + rng.normal(scale=5, size=150)
+    groups = np.repeat(np.arange(5), 30)
+    model = GroupTunedCatBoost({"depth": [2, 3]}, max_rounds=40).fit(X, y, groups)
+    assert 1 <= model.best_rounds_ <= 40 and model.best_params_["depth"] in (2, 3)
+    assert model.chosen_ == {**model.best_params_, "rounds": model.best_rounds_}
+    assert np.corrcoef(model.predict(X, groups=groups), y)[0, 1] > 0.9 and abs(model.predict(X).mean() - 300) < 15
+
+
+def test_evaluation_records_the_chosen_hyperparameters(clean):
+    import json
+    from sklearn.linear_model import Lasso
+    from src.evaluation import ModelSpec, evaluate_model, make_folds
+    from src.models import GroupTunedSearch
+    spec = ModelSpec("lasso", "linear", lambda: GroupTunedSearch(Lasso(), {"alpha": [0.01, 0.1]}), uses_source=True)
+    rows = evaluate_model(clean, spec, {"loso": make_folds(clean, "loso")}, ["yield_strength_mpa"])
+    assert rows["chosen"].notna().all() and json.loads(rows["chosen"].iloc[0])["alpha"] in (0.01, 0.1)
+    plain = evaluate_model(clean, ModelSpec("mean", "tree", __import__("sklearn.dummy", fromlist=["x"]).DummyRegressor),
+                           {"loso": make_folds(clean, "loso")}, ["yield_strength_mpa"])
+    assert plain["chosen"].isna().all()
