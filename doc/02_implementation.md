@@ -11,12 +11,14 @@ describes the code.
 |---|---|
 | `src/config.py` | **Single registry of rules**: column lists, targets, excluded columns, censoring / unit-fix / range / nitrogen / hardness rules, weld-type merges, source-group rules, thresholds (`MISSING_FLAG_MIN_RATE`, `N_SPLITS`, `RANDOM_SEED`). Every rule has a one-line rationale. |
 | `src/loading.py` | `load_raw()` reads `data/welddb.data` as **text** (`N` becomes NaN, nothing else does) and adds `source`; `derive_source()` applies the grouping rules. |
-| `src/cleaning.py` | `clean_dataframe(raw)` turns text into typed numbers, driven by the registry. Parsers **raise** on any unknown notation instead of producing a silent NaN. |
+| `src/cleaning.py` | `clean_dataframe(raw, censored_factor=0.5)` turns text into typed numbers, driven by the registry (`censored_factor=None` keeps censored values as NaN, for sensitivity analyses). Parsers **raise** on any unknown notation instead of producing a silent NaN. |
 | `src/preprocessing.py` | `feature_spec()` (per-target features with leakage guards), `MissingnessFlags`, `LogShift`, `build_preprocessor()` / `build_pipeline()` for the `tree` and `linear` families. |
-| `src/evaluation.py` | `make_folds()`, `evaluate_model()`, `compare_models()`, `summarize()`, `protocol_gap()`, `unlabeled_pool()`. |
+| `src/evaluation.py` | `make_folds()` (protocols `grouped`, `random`, `loso` = one held-out study at a time), `evaluate_model()`, `compare_models()`, `summarize()`, `protocol_gap()`, `per_study_scores()`, `unlabeled_pool()`. Every fold reports R2, RMSE, MAE, `skill` (error reduction against the training-fold mean), `bias` and `within_rho` (Spearman inside a study). |
+| `src/baselines.py` | `StudyMeanRegressor` and `baseline_models()`: the global mean and the study mean every model has to beat. |
+| `src/models.py` | `GroupTunedRidge`: a ridge whose penalty is chosen by cross-validation over whole studies of the training rows (a plain `RidgeCV` would pick a weak penalty because rows of one study look alike). |
 | `src/semi_supervised.py` | `PseudoLabelRegressor`, a minimal confidence-ranked pseudo-labeling wrapper. |
-| `src/analysis.py` | `source_demeaned_correlations()`, the within-study correlation used by notebook section 4.E. |
-| `tests/test_cleaning.py` | 17 tests (parsers, real-data counts, leakage guards, folds, within-source analysis). |
+| `src/analysis.py` | `source_demeaned_correlations()` (within-study correlation, 4.E), `eta_squared()` (variance explained by a group, adjusted), `parallel_analysis()` (components above noise), `standardise_for_pca()` and `pca_report()` (notebook 02). |
+| `tests/test_cleaning.py` | 27 tests (parsers, censoring factor, real-data counts, leakage guards, folds, within-source correlation, eta-squared, parallel analysis). |
 
 Data flow:
 
@@ -72,7 +74,9 @@ rule change would move.
 - **Preprocessors** (always `fit` on the training fold):
   - `tree`: missing flags, one-hot, NaN kept.
   - `linear`: missing flags, shifted log on S, P, Cu, Sn, B, As, train-fold median,
-    `RobustScaler`, one-hot. Output has no NaN.
+    `RobustScaler`, a clip of the scaled numeric features to [-5, 5], one-hot. Output has no
+    NaN. `build_preprocessor(..., clip=None)` and `ModelSpec(clip=None)` reproduce the
+    unclipped version, kept to document the defect.
   - Flags are created for features missing in at least 5% of the training fold
     (16 of 25 on the full data, 14 on a 1000-row subset), so which flags exist can
     change between folds.
@@ -85,28 +89,23 @@ rule change would move.
 
 ## 4. Verification
 
-- **Tests**: 17 pass. They pin: all numeric columns numeric, NaN counts unchanged,
+- **Tests**: 27 pass. They pin: all numeric columns numeric, NaN counts unchanged,
   `n_conc_ppm` 1242 non-null, hardness 138, `b_conc_ppm` 419 censored, 33 source
   groups, weld-type levels (`MMA` 1180), `charpy_temp_c` only in the toughness
   features, no target in any feature set, grouped folds never share a source, folds
   are deterministic, and the within-source analysis flips the sign on synthetic data
-  whose between-study offsets mask the true relation.
-- **Notebook**: `01_exploration.ipynb` (38 cells) runs top to bottom without errors
-  from its own folder, on `src.loading`.
-- **Smoke test** of the evaluation layer (2 targets, 5 folds, default
-  hyperparameters, 100 trees; not a result to report):
-
-  | target | model | R2 random | R2 grouped |
-  |---|---|---|---|
-  | yield strength | random forest | 0.81 | 0.04 |
-  | yield strength | ridge | 0.61 | -1.76 |
-  | Charpy toughness | random forest | 0.83 | -0.84 |
-  | Charpy toughness | ridge | 0.60 | -0.88 |
-
-  Pseudo-labeling matches its baseline (0.81 / 0.83 random). The gap between the two
-  protocols is the quantity the double protocol was designed to expose. Grouped folds
-  are very uneven (test sizes 168, 413, 127, 174, 770: the 770 contains `Evans`), so
-  the grouped numbers are noisy.
+  whose between-study offsets mask the true relation; eta-squared separates structured
+  from random groups; parallel analysis recovers the number of latent factors.
+- **Notebooks**: `01_exploration.ipynb` (38 cells) and `02_preprocessing_pca.ipynb`
+  (55 cells) run top to bottom without errors from the `notebooks/` folder, on `src`;
+  `03_supervised_models.ipynb` (20 cells, section 1 only) too.
+- **Reference scores** (notebook 03, section 1; 5 targets, 200 trees): on a study held
+  out of training, the training-mean predictor has R2 between -0.37 and -2.9, so R2 alone
+  says little; the random forest has a skill against the training mean of 0.28-0.30 (yield
+  strength), 0.39-0.42 (UTS), 0.16-0.22 (Charpy), 0.09-0.29 (reduction of area) and
+  -0.06-0.28 (elongation), against 0.74-0.86 in the random protocol. The study mean alone
+  gives a random-protocol skill of 0.20-0.55. The grouped folds are very uneven (one
+  contains `Evans`), which is why the leave-one-study-out scores are reported per study.
 
 ## 5. Corrections made along the way
 
@@ -132,6 +131,14 @@ Found while implementing and re-running the exploration:
 | Process variables are the "solid" correlations (4.C) | Voltage, heat input, current vs reduction of area drop from about -0.6 to -0.1/-0.2 once the study mean is removed (4.E); Cr, V, Nb, Mn hold up |
 | Ranking input-target pairs on the overall coefficient | Between-study differences dominate it; feature screening should use the within-source coefficient |
 | README: 1,651 rows, `welddb.csv` / `welddb.txt` | 1,652 rows, `welddb.data` / `welddb.info` |
+| Boron vs UTS is 0.50 within a study (4.E) | 0.14 once the censored rows are kept (n 45 -> 259): a small-sample artefact (notebook 02, 1.4) |
+| Nb-V redundancy 0.56 (4.C) | 0.83: the estimate rested on fewer rows before cleaning |
+| R2 close to 0 on a new study means almost nothing is explained (smoke test) | R2 is taken against the *test fold's* mean; the training-mean predictor scores -0.37 on yield strength, so the forest's 0.05 is a skill of 0.28 against it (notebook 03, 1.1) |
+| The ridge is worse than the mean on new studies: linear models do not transfer | A defect of the pipeline: `RobustScaler` divides by a tiny interquartile range and scaled values reach 100-1200. Fixed: clip at 5 and a penalty chosen by study cross-validation inside the training data; the skill goes from -1.69 to +0.01 on yield strength (a manual search on the scored studies had suggested +0.09, which was optimistic) (notebook 03, 1.4) |
+| `current_a` / `voltage_v` have a real Pearson / Spearman divergence (4.B) | It came mostly through their pairs with `co_conc_wt`; they are not in the top 10 on cleaned data (notebook 02, 1.3) |
+| Only 134 rows have all targets, so a joint model is out | 650 rows have all four tensile targets; 134 is the effect of Charpy toughness (notebook 02, 2.8) |
+| The variance partition of each input is a direct guide for choosing variables | The study share of an input does not predict whether its target correlations survive within a study (Spearman -0.09); screening stays on the within-study coefficient (notebook 02, 2.8) |
+| The random protocol leaks because rows are replicated (53% of rows share an input vector) | Measured on labeled rows: only 10-11% of tensile rows have a labeled twin; for Charpy 70% are the same weld at another temperature, 4% at the same temperature (notebook 02, 2.7) |
 
 ## 6. Assumptions that are not verified
 
@@ -149,15 +156,20 @@ Found while implementing and re-running the exploration:
 
 ## 7. Known limitations and next steps
 
-- Sections 4.A to 4.E of the exploration still run on `num`, a NaN-coerced copy where
-  censored values are missing. They should be re-run on `clean_dataframe` output; the
-  conclusions mark this as provisional.
+- Sections 4.A to 4.E of notebook 01 still run on `num`, a NaN-coerced copy; it is kept
+  on purpose as the raw-data exploration. Notebook 02 re-checks 4.A-4.C on the cleaned
+  data and gives a verdict per conclusion (its section 1.6); 4.E was not redone.
 - `PseudoLabelRegressor` only accepts Random Forest / ExtraTrees (it needs the spread of
   the trees as a confidence measure). Self-training with other estimators, label
   propagation or co-training are not implemented.
 - The within-source coefficient assumes a similar slope in every study and rests on few
   studies for some pairs (for example boron vs UTS: 45 rows, 4 studies).
-- Not written yet: PCA notebook, `models.py`, hyperparameter search, the 32-row
-  `EvHtIp1979` sensitivity run, and the model comparison table of the README.
+- Not written yet: `models.py`, the rest of notebook 03 and notebooks 04-05, hyperparameter search, the 32-row
+  `EvHtIp1979` sensitivity run, and the model comparison table of the README. A third
+  validation protocol (grouped by input fingerprint) is proposed in notebook 02 but not
+  implemented: it changes the evaluation design and awaits the user's agreement.
+- PCA findings that constrain the models: every leading component is mostly a study axis
+  (adjusted eta-squared of PC1 against `source` 0.65-0.97), and the 25 numeric inputs are
+  not compressible (80% of the variance needs 12 components). See `03_project_structure.md`.
 - Requirements: `GroupKFold(shuffle=True)` needs scikit-learn 1.6 or later, and the
   type hints need Python 3.10 or later (the environment uses scikit-learn 1.9, Python 3.12).

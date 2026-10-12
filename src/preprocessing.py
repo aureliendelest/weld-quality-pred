@@ -13,12 +13,12 @@ from sklearn.base import BaseEstimator, OneToOneFeatureMixin, TransformerMixin
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, RobustScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, RobustScaler
 
 from .cleaning import censored_flag_name
 from .config import (
     CATEGORICAL_FEATURES, CENSORED_COLUMNS, EXCLUDED_FROM_MODELING,
-    MISSING_FLAG_MIN_RATE, NUMERIC_FEATURES, OUTCOME_COLUMNS, SKEWED_COLUMNS,
+    MISSING_FLAG_MIN_RATE, NUMERIC_FEATURES, OUTCOME_COLUMNS, SCALED_CLIP, SKEWED_COLUMNS,
     SOURCE_COLUMN, TARGETS, TEST_CONDITION_FEATURES,
 )
 
@@ -110,8 +110,11 @@ def _one_hot():
     return OneHotEncoder(handle_unknown="ignore", sparse_output=False)
 
 
-def build_preprocessor(family: str, spec: FeatureSpec) -> Pipeline:
-    """Unfitted preprocessor for a family; input is `df[spec.columns]`."""
+def build_preprocessor(family: str, spec: FeatureSpec, clip: float | None = SCALED_CLIP) -> Pipeline:
+    """Unfitted preprocessor for a family; input is `df[spec.columns]`.
+
+    `clip` bounds the scaled numeric features of the linear family (None disables it).
+    """
     flags = MissingnessFlags(columns=spec.numeric)
     if family == "tree":
         columns = ColumnTransformer(
@@ -123,8 +126,12 @@ def build_preprocessor(family: str, spec: FeatureSpec) -> Pipeline:
         regular = [c for c in spec.numeric if c not in skewed]
 
         def scaled(*steps):
+            tail = []
+            if clip is not None:
+                bound = lambda X: np.clip(np.asarray(X, dtype=float), -clip, clip)
+                tail = [("clip", FunctionTransformer(bound, feature_names_out="one-to-one"))]
             return Pipeline([*steps, ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
-                             ("scale", RobustScaler())])
+                             ("scale", RobustScaler()), *tail])
 
         columns = ColumnTransformer(
             [

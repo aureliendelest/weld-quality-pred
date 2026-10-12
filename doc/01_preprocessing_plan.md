@@ -151,6 +151,14 @@ standard scaler. The first version proposed `log1p`; it is nearly the identity
 on wt% values of 0.001-0.14, so the transform is `log(x + s)` with `s` the
 smallest positive training value of each column.
 
+**Defect found and fixed (notebook 03, 1.4)**: for variables missing in more than half the rows (Nb, Sb,
+Cr) or concentrated on one value (interpass temperature), the interquartile range of the median-filled
+column is zero, scikit-learn divides by 1, and the variable keeps its raw unit; scaled values reached
+100 to 1200 and a ridge extrapolated wildly on a held-out study (skill -1.69 on yield strength). The
+linear family now clips the scaled features to [-5, 5] (`SCALED_CLIP`) and the ridge penalty is chosen by
+cross-validation over whole studies inside the training data (`GroupTunedRidge`); the skill becomes +0.01.
+A linear model remains well below the forest on new studies.
+
 ## 9. Per-target evaluation
 
 **Decision**: one model and one score per target, on the rows where that target
@@ -160,6 +168,12 @@ exists. Metrics: R2, RMSE, MAE, as mean and std over folds.
 ~91% of the usable data and bias toward studies that measure everything. Per-
 target scores also show a model that is good on yield strength but poor on
 toughness.
+
+**Refinement (notebook 02, 2.8)**: the figure of 134 comes from Charpy toughness.
+650 rows have all four tensile targets, which are almost one-dimensional (PC1 = 76%
+of their variance, identical inside studies). A joint model of the four tensile
+properties is therefore feasible and is an option for notebook 03; the per-target
+score stays the unit of comparison, and Charpy toughness is modeled apart.
 
 ## 10. Semi-supervised comparison
 
@@ -209,3 +223,5 @@ one study, and a threshold would remove a whole study, which is a bias.
 `preprocessing.py`, `evaluation.py`, `semi_supervised.py`; tests in `tests/`.
 See [`02_implementation.md`](02_implementation.md) for how the code works, the
 corrections made during implementation, and the assumptions still unverified.
+See [`03_project_structure.md`](03_project_structure.md) for the notebook roadmap and what
+notebook 02 settled for the next stages.

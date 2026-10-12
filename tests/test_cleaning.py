@@ -121,3 +121,103 @@ def test_within_source_correlation_removes_between_source_effects():
     result = source_demeaned_correlations(data[["x", "y"]], data["s"], ["x"], ["y"]).iloc[0]
     assert result["rho_overall"] > 0.5        # between-study offsets
     assert result["rho_within"] < -0.8        # the real within-study relation
+
+
+def test_eta_squared_detects_group_structure_and_ignores_noise():
+    from src.analysis import eta_squared
+    rng = np.random.default_rng(0)
+    groups = np.repeat(["a", "b", "c", "d"], 50)
+    structured = rng.normal(0, 1, 200) + np.repeat([0, 3, 6, 9], 50)
+    noise = rng.normal(0, 1, 200)
+    assert eta_squared(structured, groups) > 0.8
+    assert abs(eta_squared(noise, groups)) < 0.05
+
+
+def test_parallel_analysis_recovers_the_number_of_latent_factors():
+    from src.analysis import parallel_analysis, pca_report, standardise_for_pca
+    rng = np.random.default_rng(1)
+    latent = rng.normal(size=(400, 2))
+    loadings = rng.normal(size=(2, 8))
+    data = pd.DataFrame(latent @ loadings + rng.normal(0, 0.3, (400, 8)),
+                        columns=[f"x{i}" for i in range(8)])
+    _, n_keep = parallel_analysis(standardise_for_pca(data, log_columns=[]))
+    assert n_keep == 2
+    report = pca_report(standardise_for_pca(data, log_columns=[]))
+    assert report.explained_ratio.iloc[:2].sum() > 0.8
+    assert report.components_for(0.9) <= 3
+
+
+def test_censoring_factor_is_a_parameter():
+    values, flag = parse_censored(text(["<0.01", "0.5"]), "mo_conc_wt", factor=1.0)
+    assert values.iloc[0] == pytest.approx(0.01)
+    values, flag = parse_censored(text(["<0.01", "0.5"]), "mo_conc_wt", factor=None)
+    assert np.isnan(values.iloc[0]) and flag.iloc[0] and values.iloc[1] == 0.5
+
+
+# ---- baselines and per-study evaluation -------------------------------------
+@pytest.fixture(scope="module")
+def baseline_results(clean):
+    from src.baselines import baseline_models
+    from src.evaluation import ALL_PROTOCOLS, compare_models
+    return compare_models(clean, baseline_models(), targets=["yield_strength_mpa"], protocols=ALL_PROTOCOLS)
+
+
+def test_study_mean_regressor_uses_the_study_then_falls_back():
+    from src.baselines import StudyMeanRegressor
+    model = StudyMeanRegressor().fit(None, [1.0, 3.0, 10.0], groups=["a", "a", "b"])
+    assert model.predict(None, groups=["a", "b", "unseen"]).tolist() == [2.0, 10.0, pytest.approx(14 / 3)]
+    with pytest.raises(ValueError):
+        model.predict(None)
+
+
+def test_global_mean_has_zero_skill_by_construction(baseline_results):
+    rows = baseline_results[baseline_results["model"] == "global_mean"]
+    assert rows["skill"].abs().max() < 1e-9 and len(rows) > 10
+
+
+def test_study_mean_only_helps_when_the_study_was_seen(baseline_results):
+    study_mean = baseline_results[baseline_results["model"] == "study_mean"]
+    by_protocol = study_mean.groupby("protocol")["skill"].mean()
+    assert by_protocol["random"] > 0.3                      # same study in training
+    assert abs(by_protocol["grouped"]) < 1e-9 and abs(by_protocol["loso"]) < 1e-9
+
+
+def test_leave_one_study_out_folds_hold_out_one_study_each(clean):
+    from src.evaluation import make_folds
+    from src.config import LOSO_MIN_ROWS
+    folds = make_folds(clean, "loso")
+    sizes = clean["source"].value_counts()
+    assert len(folds) == int((sizes >= LOSO_MIN_ROWS).sum())
+    for train, test in folds:
+        assert clean["source"].iloc[test].nunique() == 1
+        assert not set(clean["source"].iloc[train]) & set(clean["source"].iloc[test])
+
+
+def test_per_study_scores_report_one_row_per_study_and_model(baseline_results):
+    from src.evaluation import per_study_scores
+    table = per_study_scores(baseline_results)
+    assert {"study", "skill", "bias", "within_rho"} <= set(table.columns)
+    assert table.groupby("model")["study"].nunique().nunique() == 1
+    assert table["study"].notna().all()
+
+
+# ---- linear family: bounded features, study-tuned ridge ----------------------
+def test_linear_preprocessor_bounds_the_scaled_features(clean):
+    from src.config import SCALED_CLIP
+    from src.preprocessing import build_preprocessor
+    spec = feature_spec(clean, "yield_strength_mpa")
+    bounded = build_preprocessor("linear", spec).fit_transform(clean[spec.columns])
+    assert not bounded.isna().any().any() and bounded.abs().max().max() <= SCALED_CLIP + 1e-9
+    unbounded = build_preprocessor("linear", spec, clip=None).fit_transform(clean[spec.columns])
+    assert unbounded.abs().max().max() > 50           # the defect the clip removes
+
+
+def test_group_tuned_ridge_picks_a_penalty_from_its_grid():
+    from src.models import GroupTunedRidge
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(120, 4)), columns=list("abcd"))
+    y = X["a"] * 3 + rng.normal(0, 0.5, 120)
+    groups = np.repeat(["s1", "s2", "s3", "s4", "s5", "s6"], 20)
+    model = GroupTunedRidge().fit(X, y, groups=groups)
+    assert model.alpha_ in model.alphas
+    assert model.predict(X, groups=groups).shape == (120,) and np.corrcoef(model.predict(X), y)[0, 1] > 0.9

@@ -7,6 +7,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = PROJECT_ROOT / "data" / "welddb.data"
+FIGURES_DIR = PROJECT_ROOT / "figures"      # one subfolder per notebook
+RESULTS_DIR = PROJECT_ROOT / "results"      # fold-level and summary tables (CSV)
 
 # --------------------------------------------------------------------------
 # Raw columns (order of welddb.data, see data/welddb.info)
@@ -132,6 +134,11 @@ SOURCE_ALIASES = {"Ga&K": "Gar&K", "KocakPEv": "KocakPREv"}
 # at least this share of the training fold.
 MISSING_FLAG_MIN_RATE = 0.05
 
+# Linear family: scaled numeric features are clipped to [-SCALED_CLIP, SCALED_CLIP]. Without it,
+# variables whose middle 50% is a single value keep their raw unit (Nb up to ~1000 ppm) and a
+# linear model extrapolates wildly on a new study (notebook 03, 1.4).
+SCALED_CLIP = 5.0
+
 # Right-skewed impurities (exploration 4.A): shifted log, linear family only.
 SKEWED_COLUMNS = [
     "s_conc_wt", "p_conc_wt", "cu_conc_wt", "sn_conc_ppm", "b_conc_ppm", "as_conc_ppm",
@@ -142,4 +149,7 @@ SKEWED_COLUMNS = [
 # --------------------------------------------------------------------------
 RANDOM_SEED = 0
 N_SPLITS = 5
+# Leave-one-study-out: only studies with at least this many rows are held out, and a
+# held-out study needs this many labeled rows for a target to be scored.
+LOSO_MIN_ROWS = 20
 SOURCE_COLUMN = "source"

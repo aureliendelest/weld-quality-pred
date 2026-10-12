@@ -86,18 +86,25 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 │   └── welddb.info             # column descriptions
 ├── doc/
 │   ├── 01_preprocessing_plan.md   # strategic choices and why
-│   └── 02_implementation.md       # how src/ works, corrections, open assumptions
-├── figures/exploration/        # figures saved by the exploration notebook
+│   ├── 02_implementation.md       # how src/ works, corrections, open assumptions
+│   └── 03_project_structure.md    # notebook roadmap and decisions for the next stages
+├── figures/                    # one subfolder per notebook (exploration/, preprocessing_pca/)
 ├── notebooks/
-│   └── 01_exploration.ipynb    # (planned: PCA, supervised models, semi-supervised)
+│   ├── 01_exploration.ipynb         # raw data, frozen
+│   ├── 02_preprocessing_pca.ipynb   # cleaning effects and PCA
+│   ├── 03_supervised_models.ipynb   # baselines and per-study scores (started)
+│   └── ...                          # planned: 04 semi-supervised, 05 comparison
+├── results/                    # CSV tables written by the notebooks
 ├── src/
 │   ├── config.py               # every cleaning / feature rule, with its rationale
 │   ├── loading.py              # read the raw file, derive the study group `source`
 │   ├── cleaning.py             # text -> typed numeric data
 │   ├── preprocessing.py        # per-target features, tree / linear preprocessors
 │   ├── evaluation.py           # identical folds, one score per target
+│   ├── baselines.py            # global-mean and study-mean reference predictors
+│   ├── models.py               # study-tuned ridge
 │   ├── semi_supervised.py      # pseudo-labeling regressor
-│   └── analysis.py             # within-study correlations
+│   └── analysis.py             # within-study correlations, PCA helpers
 ├── tests/
 ├── report/
 ├── requirements.txt

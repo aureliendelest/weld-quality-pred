@@ -3,6 +3,7 @@
 Every parser raises on a value it does not recognise: a new lab notation must
 never become a silent NaN.
 """
+import numpy as np
 import pandas as pd
 
 from .config import (
@@ -29,8 +30,12 @@ def censored_flag_name(column: str) -> str:
     return f"{column}_censored"
 
 
-def parse_censored(series: pd.Series, column: str) -> tuple[pd.Series, pd.Series]:
-    """'<x' -> x * CENSORED_VALUE_FACTOR; returns (values, censored flag)."""
+def parse_censored(series: pd.Series, column: str,
+                   factor: float | None = CENSORED_VALUE_FACTOR) -> tuple[pd.Series, pd.Series]:
+    """'<x' -> x * factor; returns (values, censored flag).
+
+    `factor=None` keeps censored values as NaN (used for sensitivity analyses).
+    """
     s = series.copy()
     for (col, bad), good in UNIT_FIXES.items():
         if col == column:
@@ -38,8 +43,10 @@ def parse_censored(series: pd.Series, column: str) -> tuple[pd.Series, pd.Series
     flag = s.str.match(_CENSORED, na=False)
     thresholds = pd.to_numeric(s.str.extract(_CENSORED)[0])
     values = pd.to_numeric(s.where(~flag), errors="coerce")
-    values[flag] = thresholds[flag] * CENSORED_VALUE_FACTOR
-    _fail_on_unparsed(s, values, column)
+    unparsed = s[s.notna() & ~flag & values.isna()]
+    if len(unparsed):
+        raise ValueError(f"{column}: unrecognised values {sorted(unparsed.unique())[:10]}")
+    values[flag] = np.nan if factor is None else thresholds[flag] * factor
     return values, flag
 
 
@@ -78,13 +85,16 @@ def normalise_categoricals(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def clean_dataframe(raw: pd.DataFrame) -> pd.DataFrame:
-    """Typed numeric frame + `<col>_censored` flags + hardness scale."""
+def clean_dataframe(raw: pd.DataFrame, censored_factor: float | None = CENSORED_VALUE_FACTOR) -> pd.DataFrame:
+    """Typed numeric frame + `<col>_censored` flags + hardness scale.
+
+    `censored_factor`: value given to `<x` is x * factor (None keeps them NaN).
+    """
     df = raw.copy()
     done = set()
 
     for column in CENSORED_COLUMNS:
-        df[column], df[censored_flag_name(column)] = parse_censored(raw[column], column)
+        df[column], df[censored_flag_name(column)] = parse_censored(raw[column], column, censored_factor)
         done.add(column)
     for column in RANGE_COLUMNS:
         df[column] = parse_range(raw[column], column)
