@@ -141,23 +141,30 @@ def run_option_one(df: pd.DataFrame, out_dir, rerun: bool = False, k: int = 3, a
 
 
 TUNED_ROUNDS = "catboost (rounds tuned)"
+WIDE_ROUNDS = "catboost (rounds tuned, wide grid)"
+# name -> (maximum number of rounds, grid, file tag). The first search put the rounds on the upper edge of its grid
+# and the depth and the L2 penalty on the lower one; the second widens it in that direction.
+_ROUNDS_SEARCHES = {
+    TUNED_ROUNDS: (600, {"depth": [4, 6], "l2_leaf_reg": [3, 10]}, "catboost_rounds"),
+    WIDE_ROUNDS: (1500, {"depth": [2, 3, 4], "l2_leaf_reg": [1, 3]}, "catboost_rounds_wide"),
+}
 
 
-def tuned_rounds_model(max_rounds: int = 600) -> ModelSpec:
+def tuned_rounds_model(name: str = TUNED_ROUNDS) -> ModelSpec:
     """CatBoost with the depth, the L2 penalty and the number of rounds chosen by cross-validation over studies.
 
-    The learning rate is fixed at 0.05 and the rounds are read off the validation curve up to `max_rounds`.
+    The learning rate is fixed at 0.05 and the rounds are read off the validation curve up to the search's maximum.
     """
-    grid = {"depth": [4, 6], "l2_leaf_reg": [3, 10]}
-    return ModelSpec(TUNED_ROUNDS, "tree", lambda: GroupTunedCatBoost(grid, max_rounds=max_rounds), uses_source=True)
+    max_rounds, grid, _ = _ROUNDS_SEARCHES[name]
+    return ModelSpec(name, "tree", lambda: GroupTunedCatBoost(grid, max_rounds=max_rounds), uses_source=True)
 
 
-def run_tuned_rounds(df: pd.DataFrame, out_dir, rerun: bool = False, max_rounds: int = 600, log=None):
-    """Leave-one-study-out, then `grouped` (5 seeds), for the CatBoost with tuned rounds; saved tables are reused."""
-    spec = tuned_rounds_model(max_rounds)
+def run_tuned_rounds(df: pd.DataFrame, out_dir, name: str = TUNED_ROUNDS, rerun: bool = False, log=None):
+    """Leave-one-study-out, then `grouped` (5 seeds), for a CatBoost with tuned rounds; saved tables are reused."""
+    spec, tag = tuned_rounds_model(name), _ROUNDS_SEARCHES[name][2]
     tables = []
-    for name, protocol, seeds in (("loso", "loso", (0,)), ("grouped", "grouped", ABLATION_SEEDS)):
-        file = out_dir / f"03_catboost_rounds_{name}_folds.csv"
+    for protocol, seeds in (("loso", (0,)), ("grouped", ABLATION_SEEDS)):
+        file = out_dir / f"03_{tag}_{protocol}_folds.csv"
         if file.exists() and not rerun:
             tables.append(pd.read_csv(file))
             continue
