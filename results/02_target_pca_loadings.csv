@@ -1,0 +1,7 @@
+,"4 tensile, all rows","4 tensile, all rows","4 tensile, study mean removed","4 tensile, study mean removed",5 targets with Charpy,5 targets with Charpy
+,PC1,PC2,PC1,PC2,PC1,PC2
+yield_strength_mpa,0.9,0.37,0.9,0.38,0.77,0.55
+uts_mpa,0.96,0.08,0.95,0.21,0.97,0.04
+elongation_pct,-0.86,-0.09,-0.89,0.09,-0.67,-0.54
+reduction_of_area_pct,-0.75,0.66,-0.76,0.62,-0.87,0.43
+charpy_toughness_j,,,,,-0.72,0.62

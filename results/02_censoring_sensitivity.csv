@@ -1,0 +1,5 @@
+rule,pairs,rank_corr_with_x/2,max_abs_change,sign_flips (|rho|>0.1 both),membership_changes (|rho_within|>=0.3)
+x/2 (chosen),125,1.0,0.0,0,0
+x,125,0.993,0.09,0,2
+0,125,0.997,0.064,0,0
+NaN,121,0.959,0.363,0,5

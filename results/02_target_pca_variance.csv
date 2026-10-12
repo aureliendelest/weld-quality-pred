@@ -1,0 +1,4 @@
+pca,rows,PC1_%,PC2_%,PC3_%,parallel_keep
+"4 tensile, all rows",650,75.7,14.7,8.3,1
+"4 tensile, study mean removed",638,77.1,14.7,6.9,1
+5 targets with Charpy,134,65.1,23.4,8.9,1

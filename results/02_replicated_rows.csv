@@ -1,0 +1,7 @@
+target,labeled_rows,rows_in_replicate_groups,share_%,sd_within_group,sd_overall
+yield_strength_mpa,780,80,10,8.3,92.9
+uts_mpa,738,82,11,5.5,88.6
+elongation_pct,700,75,11,1.0,4.9
+reduction_of_area_pct,705,75,11,1.0,8.9
+"charpy_toughness_j (same weld, any temperature)",879,618,70,49.4,50.1
+charpy_toughness_j (same weld and temperature),879,36,4,11.6,50.1

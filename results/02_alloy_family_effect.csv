@@ -1,0 +1,6 @@
+target,rows,eta2_family_overall,eta2_family_within_study
+yield_strength_mpa,378,0.18,0.04
+uts_mpa,352,0.25,0.11
+elongation_pct,339,0.29,0.11
+reduction_of_area_pct,349,0.02,0.08
+charpy_toughness_j,338,0.05,0.01

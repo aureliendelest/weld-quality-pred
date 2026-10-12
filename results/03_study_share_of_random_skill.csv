@@ -1,0 +1,6 @@
+target,study_mean,random_forest,share_of_forest_skill_%
+charpy_toughness_j,0.2,0.83,25.0
+elongation_pct,0.3,0.74,40.0
+reduction_of_area_pct,0.55,0.74,74.0
+uts_mpa,0.35,0.86,41.0
+yield_strength_mpa,0.35,0.82,43.0
