@@ -25,7 +25,7 @@ from .config import (
     CATEGORICAL_FEATURES, LOSO_MIN_ROWS, N_SPLITS, NUMERIC_FEATURES, RANDOM_SEED, SCALED_CLIP,
     SOURCE_COLUMN, TARGETS,
 )
-from .preprocessing import FeatureOptions, add_derived, build_preprocessor, feature_spec
+from .preprocessing import STUDY_KEY, FeatureOptions, add_derived, build_preprocessor, feature_spec
 
 PROTOCOLS = ("grouped", "random")            # the default pair
 ALL_PROTOCOLS = PROTOCOLS + ("loso",)
@@ -120,6 +120,8 @@ def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARG
     for target in targets:
         spec = feature_spec(frame, target, model.options)
         X, y = frame[spec.columns], frame[target]
+        if model.options.needs_study:
+            X = X.assign(**{STUDY_KEY: source})      # only to centre by study, see ReplaceNumeric
         labeled = y.notna().to_numpy()
         for protocol, protocol_folds in folds.items():
             min_test = LOSO_MIN_ROWS if protocol == "loso" else MIN_TEST_ROWS

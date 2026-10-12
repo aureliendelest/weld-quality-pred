@@ -314,3 +314,45 @@ def test_loso_deltas_and_seed_spread():
     results = pd.DataFrame(rows)
     assert loso_deltas(results, "m", "v")["uts_mpa"].tolist() == pytest.approx([0.3, 0.3])
     assert grouped_seed_spread(results).loc[("m", "uts_mpa"), "skill_std"] == pytest.approx(0.1 / np.sqrt(2))
+
+
+def _within_frame(clean, target="yield_strength_mpa"):
+    from src.preprocessing import STUDY_KEY
+    spec = feature_spec(clean, target)
+    return spec, clean[spec.columns].assign(**{STUDY_KEY: clean["source"]})
+
+
+def test_within_study_modes_replace_the_numeric_features(clean):
+    from src.preprocessing import FeatureOptions, build_preprocessor
+    spec, X = _within_frame(clean)
+    train, test = X.iloc[:800], X.iloc[800:]
+    for mode in ("pca", "pca_within", "within"):
+        out = build_preprocessor("tree", spec, options=FeatureOptions(numeric_mode=mode)).fit(train).transform(test)
+        assert not set(spec.numeric) & set(out.columns), mode
+        assert not any(c.startswith("__") for c in out.columns), mode
+        new = [c for c in out.columns if c.startswith("pca_") or c.endswith("_dev")]
+        assert new and not out[new].isna().any().any() and len(out) == len(test), mode
+    assert any(c.endswith("_missing") for c in out.columns) and any(c.startswith("weld_type") for c in out.columns)
+
+
+def test_within_deviation_removes_the_study_level_and_zeroes_small_studies(clean):
+    from src.config import WITHIN_STUDY_MIN_ROWS
+    from src.preprocessing import FeatureOptions, build_preprocessor
+    spec, X = _within_frame(clean)
+    transformer = build_preprocessor("linear", spec, options=FeatureOptions(numeric_mode="within")).fit(X)
+    Z = transformer._scaled(X)
+    deviation = transformer._deviation(Z, X["__study__"])
+    sizes = X["__study__"].map(X["__study__"].value_counts())
+    big = deviation[(sizes >= WITHIN_STUDY_MIN_ROWS).to_numpy()]
+    assert big.groupby(X["__study__"][sizes >= WITHIN_STUDY_MIN_ROWS].to_numpy()).mean().abs().max().max() < 1e-9
+    assert (deviation[(sizes < WITHIN_STUDY_MIN_ROWS).to_numpy()] == 0).all().all()
+
+
+def test_the_study_never_reaches_the_estimator_and_only_within_modes_need_it(clean):
+    from src.preprocessing import FeatureOptions
+    assert FeatureOptions(numeric_mode="within").needs_study and FeatureOptions(numeric_mode="pca_within").needs_study
+    assert not FeatureOptions(numeric_mode="pca").needs_study and not FeatureOptions().needs_study
+    spec, X = _within_frame(clean)
+    with pytest.raises(ValueError):
+        from src.preprocessing import build_preprocessor
+        build_preprocessor("tree", spec, options=FeatureOptions(numeric_mode="pca", pca_components=3))

@@ -14,17 +14,19 @@ from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, RobustScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, RobustScaler, StandardScaler
 
 from .cleaning import censored_flag_name
 from .config import (
     CATEGORICAL_FEATURES, CENSORED_COLUMNS, DERIVED_FEATURES, EXCLUDED_FROM_MODELING,
-    MISSING_FLAG_MIN_RATE, NUMERIC_FEATURES, OUTCOME_COLUMNS, RANDOM_SEED, SCALED_CLIP,
-    SKEWED_COLUMNS, SOURCE_COLUMN, TARGETS, TEST_CONDITION_FEATURES,
+    MISSING_FLAG_MIN_RATE, NUMERIC_FEATURES, OUTCOME_COLUMNS, PARALLEL_ANALYSIS_ITER, RANDOM_SEED,
+    SCALED_CLIP, SKEWED_COLUMNS, SOURCE_COLUMN, TARGETS, TEST_CONDITION_FEATURES, WITHIN_STUDY_MIN_ROWS,
 )
 
 FAMILIES = ("tree", "linear")
 _FLAG_PATTERN = r"_(?:missing|censored)$"
+NUMERIC_MODES = ("raw", "pca", "pca_within", "within")
+STUDY_KEY = "__study__"     # column carrying the study of each row, read only to centre (never a feature)
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,12 @@ class FeatureOptions:
     extra: tuple = ()                 # derived features added (names of DERIVED_FEATURES)
     skewed_extra: tuple = ()          # more columns for the shifted log (linear family)
     pca_components: int = 0           # PCA scores appended, fitted inside each training fold
+    numeric_mode: str = "raw"         # the numeric features are replaced: "pca" scores, "within" (deviation
+                                      # from the study mean) or "pca_within" (scores of the deviations)
+
+    @property
+    def needs_study(self) -> bool:
+        return "within" in self.numeric_mode
 
 
 def add_derived(df: pd.DataFrame, names) -> pd.DataFrame:
@@ -179,6 +187,77 @@ class WithPCAScores(TransformerMixin, BaseEstimator):
         return out
 
 
+class ReplaceNumeric(TransformerMixin, BaseEstimator):
+    """Replace the numeric features of `base` by PCA scores and/or within-study deviations.
+
+    - "pca":        scores of the scaled numeric features;
+    - "within":     each scaled feature minus the mean of its study;
+    - "pca_within": scores of those deviations.
+    The study mean is taken over the rows being transformed, so a held-out study is centred on its own
+    inputs (no label is used). A study with fewer than `min_rows` rows there gets a deviation of 0.
+    Deviations and scaled features are standardised and clipped, and the number of components is fixed by
+    parallel analysis on the training fold. Flags and categoricals of `base` are kept. With a "within"
+    mode, X must carry the study of each row in the column STUDY_KEY.
+    """
+
+    def __init__(self, base, spec, mode, clip=SCALED_CLIP, min_rows=WITHIN_STUDY_MIN_ROWS):
+        self.base = base
+        self.spec = spec
+        self.mode = mode
+        self.clip = clip
+        self.min_rows = min_rows
+
+    def _scaled(self, X):
+        return self.scaler_.transform(X[list(self.spec.numeric)])
+
+    def _deviation(self, Z, study):
+        keys = np.asarray(study)
+        deviation = Z - Z.groupby(keys).transform("mean")
+        too_small = pd.Series(keys).map(pd.Series(keys).value_counts()).to_numpy() < self.min_rows
+        deviation.loc[too_small] = 0.0
+        return deviation
+
+    def _matrix(self, X):
+        Z = self._scaled(X)
+        if "within" in self.mode:
+            Z = self._deviation(Z, X[STUDY_KEY])
+        values = self.standardiser_.transform(Z)
+        if self.clip is not None:
+            values = np.clip(values, -self.clip, self.clip)
+        return pd.DataFrame(values, index=Z.index, columns=Z.columns)
+
+    def fit(self, X, y=None):
+        if self.mode not in NUMERIC_MODES[1:]:
+            raise ValueError(f"mode must be one of {NUMERIC_MODES[1:]}, got {self.mode!r}")
+        features = X[list(self.spec.columns)]
+        self.base_ = clone(self.base).fit(features)
+        numeric_only = FeatureSpec(self.spec.target, list(self.spec.numeric), [], [])
+        plain = FeatureOptions(missing_flags=False, censored_flags=False)
+        self.scaler_ = build_preprocessor("linear", numeric_only, self.clip, plain).fit(features[list(self.spec.numeric)])
+        Z = self._scaled(X)
+        if "within" in self.mode:
+            Z = self._deviation(Z, X[STUDY_KEY])
+        self.standardiser_ = StandardScaler().fit(Z)
+        if "pca" in self.mode:
+            matrix = self._matrix(X).to_numpy()
+            from .analysis import parallel_analysis     # analysis imports LogShift from this module
+            varying = matrix[:, matrix.std(axis=0) > 1e-12]
+            kept = parallel_analysis(varying, n_iter=PARALLEL_ANALYSIS_ITER, seed=RANDOM_SEED)[1] if varying.shape[1] > 1 else 1
+            self.n_components_ = max(1, kept)
+            self.pca_ = PCA(self.n_components_, random_state=RANDOM_SEED).fit(matrix)
+        return self
+
+    def transform(self, X):
+        out = self.base_.transform(X[list(self.spec.columns)]).drop(columns=list(self.spec.numeric))
+        matrix = self._matrix(X)
+        if "pca" in self.mode:
+            new = pd.DataFrame(self.pca_.transform(matrix.to_numpy()), index=out.index,
+                               columns=[f"pca_{i + 1}" for i in range(self.n_components_)])
+        else:
+            new = matrix.set_axis([f"{c}_dev" for c in matrix.columns], axis=1).set_axis(out.index, axis=0)
+        return pd.concat([out, new], axis=1)
+
+
 def build_preprocessor(family: str, spec: FeatureSpec, clip: float | None = SCALED_CLIP,
                        options: FeatureOptions | None = None):
     """Unfitted preprocessor for a family; input is `df[spec.columns]`.
@@ -220,6 +299,12 @@ def build_preprocessor(family: str, spec: FeatureSpec, clip: float | None = SCAL
         raise ValueError(f"family must be one of {FAMILIES}, got {family!r}")
     columns.set_output(transform="pandas")
     pipeline = Pipeline([("flags", flags), ("columns", columns)])
+    if options.numeric_mode not in NUMERIC_MODES:
+        raise ValueError(f"numeric_mode must be one of {NUMERIC_MODES}, got {options.numeric_mode!r}")
+    if options.numeric_mode != "raw":
+        if options.pca_components:
+            raise ValueError("pca_components appends scores, numeric_mode replaces the features: pick one")
+        return ReplaceNumeric(pipeline, spec, options.numeric_mode, clip)
     if options.pca_components:
         return WithPCAScores(pipeline, spec, options.pca_components, clip)
     return pipeline

@@ -139,6 +139,12 @@ MISSING_FLAG_MIN_RATE = 0.05
 # linear model extrapolates wildly on a new study (notebook 03, 1.4).
 SCALED_CLIP = 5.0
 
+# Within-study deviations (ablation variants `center_within`, `pca_replace_within`): a study with fewer
+# rows than this in the set being transformed has no usable mean, so its deviation is set to 0.
+WITHIN_STUDY_MIN_ROWS = 5
+# Permutations of Horn's parallel analysis, which fixes the number of PCA components inside each training fold.
+PARALLEL_ANALYSIS_ITER = 100
+
 # Right-skewed impurities (exploration 4.A): shifted log, linear family only.
 SKEWED_COLUMNS = [
     "s_conc_wt", "p_conc_wt", "cu_conc_wt", "sn_conc_ppm", "b_conc_ppm", "as_conc_ppm",
