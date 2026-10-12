@@ -356,3 +356,58 @@ def test_the_study_never_reaches_the_estimator_and_only_within_modes_need_it(cle
     with pytest.raises(ValueError):
         from src.preprocessing import build_preprocessor
         build_preprocessor("tree", spec, options=FeatureOptions(numeric_mode="pca", pca_components=3))
+
+
+# ---- model zoo -------------------------------------------------------------------
+def test_group_tuned_search_picks_from_the_grid_and_restores_the_target_scale():
+    from sklearn.linear_model import Lasso
+    from src.models import GroupTunedSearch
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(120, 3)), columns=list("abc"))
+    y = 500 + 100 * X["a"] + rng.normal(scale=5, size=120)          # far from zero mean and unit variance
+    groups = np.repeat(np.arange(6), 20)
+    model = GroupTunedSearch(Lasso(), {"alpha": [0.01, 0.1, 10.0]}).fit(X, y, groups)
+    assert model.best_params_["alpha"] in (0.01, 0.1)               # 10.0 shrinks everything to the mean
+    assert np.corrcoef(model.predict(X, groups=groups), y)[0, 1] > 0.95
+    assert abs(model.predict(X).mean() - 500) < 20
+
+
+def test_zoo_models_have_unique_names_and_use_the_study_for_tuning():
+    from src.zoo import REFERENCES, reference_models, zoo_models
+    models = zoo_models()
+    names = [m.name for m in models]
+    assert len(set(names)) == len(names) and "svr rbf + drop_arc" in names
+    assert all(m.uses_source for m in models)
+    assert [m.name for m in reference_models()][:2] == list(REFERENCES)
+    assert not any(m.name == "extra trees + drop_arc" for m in models)       # tree family: no arc variant
+
+
+def test_zoo_decisions_pair_by_study_against_the_reference():
+    from src.zoo import retained, zoo_decisions
+    rows = []
+    for model, skill in (("random forest", 0.1), ("good", 0.4), ("bad", -0.3), ("ridge (study-tuned)", 0.0)):
+        for study in ("a", "b", "c"):
+            rows.append({"protocol": "loso", "model": model, "target": "uts_mpa", "study": study,
+                         "skill": skill, "within_rho": 0.0, "seed": 0})
+    results = pd.DataFrame(rows)
+    table = zoo_decisions(results, "random forest").set_index("model")
+    assert table.loc["good", "verdict"] == "helps" and table.loc["bad", "verdict"] == "hurts"
+    assert "random forest" not in table.index and (table["reference"] == "random forest").all()
+    assert retained(results, k=1) == ["random forest", "ridge (study-tuned)", "good"]
+
+
+def test_pooled_loso_skill_leaves_out_the_excluded_pair():
+    from src.zoo import pooled_loso_skill
+    rows = [{"protocol": "loso", "model": "m", "target": "reduction_of_area_pct", "study": "Cunh", "skill": -50.0},
+            {"protocol": "loso", "model": "m", "target": "reduction_of_area_pct", "study": "Evans", "skill": 0.2}]
+    assert pooled_loso_skill(pd.DataFrame(rows))["m"] == pytest.approx(0.2)
+
+
+def test_boosting_models_share_the_protocol_and_keep_the_nan():
+    from src.zoo import BOOSTING, zoo_models
+    models = {m.name: m for m in zoo_models()}
+    assert set(BOOSTING) <= set(models)
+    assert all(models[n].family == "tree" and models[n].uses_source for n in BOOSTING)
+    grids = {n: models[n].factory().grid for n in BOOSTING}
+    assert {len(np.prod([len(v) for v in g.values()]).reshape(1)) for g in grids.values()} == {1}
+    assert {int(np.prod([len(v) for v in g.values()])) for g in grids.values()} == {8}       # same budget for the three

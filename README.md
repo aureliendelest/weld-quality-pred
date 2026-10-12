@@ -105,7 +105,8 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 │   ├── preprocessing.py        # per-target features, tree / linear preprocessors
 │   ├── evaluation.py           # identical folds, one score per target
 │   ├── baselines.py            # global-mean and study-mean reference predictors
-│   ├── models.py               # study-tuned ridge
+│   ├── models.py               # study-tuned ridge, GroupTunedSearch (any regressor tuned by CV over studies)
+│   ├── zoo.py                  # classical regressors, small grids, paired comparison against a reference
 │   ├── ablation.py             # feature-set ablations and the paired decision rule
 │   ├── semi_supervised.py      # pseudo-labeling regressor
 │   └── analysis.py             # within-study correlations, PCA helpers

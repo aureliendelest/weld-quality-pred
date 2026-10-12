@@ -34,8 +34,8 @@ The study mean is taken over the rows of the set being transformed, so a held-ou
 A variant is compared with `baseline` on identical folds, paired by held-out study (loso).
 Unit of comparison: the pairs (target, study) of the four tensile targets pooled, and Charpy
 separately (few studies). **Helps** if the mean skill gain is >= 0.05 and it wins on >= 2/3 of
-the pairs; **hurts** symmetrically; otherwise **tie**, and the simpler setting is kept (a variant
-that removes something wins ties). The pair (Cunh, reduction of area) is left out (the skill
+the pairs; **hurts** symmetrically; otherwise **tie**, and **the baseline is kept**: only a verdict
+`helps` changes the setting (amended and agreed, see the end of this file). The pair (Cunh, reduction of area) is left out (the skill
 there has a tiny denominator). The mean `within_rho` gain is reported alongside; the grouped and
 random gains are context, never a ranking.
 
@@ -57,7 +57,7 @@ chosen on the scored studies proves a mechanism, it does not give a gain to clai
 
 The feature set of the zoo is the baseline. `drop_arc` is carried as an option for the other linear models.
 
-**Amendment proposed to the rule above (needs agreement)**: "a tie keeps the simpler setting" is replaced by "**a tie keeps the baseline**; only a verdict `helps` changes the feature set". Applied literally, the first wording would remove the missing flags, Mo and the arc variables, against the evidence.
+**Amendment to the rule above (agreed)**: "a tie keeps the simpler setting" was replaced by "**a tie keeps the baseline**; only a verdict `helps` changes the feature set". Applied literally, the first wording would remove the missing flags, Mo and the arc variables, against the evidence.
 
 ## Results: replacing the features by PCA scores or by within-study deviations (`results/supervised_models/03_ablation_pca_*.csv`)
 
