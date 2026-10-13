@@ -113,6 +113,26 @@ def _within_study_rho(predicted: np.ndarray, truth: np.ndarray, studies: np.ndar
     return float(data["p"].corr(data["t"], method="spearman"))
 
 
+def fit_fold(model: ModelSpec, spec, X: pd.DataFrame, y: pd.Series, source: pd.Series, train_labeled, unlabeled=()):
+    """Preprocessor and estimator of `model` fitted on the labeled training rows (positions) of one fold."""
+    preprocessor = build_preprocessor(model.family, spec, clip=model.clip, options=model.options).fit(X.iloc[train_labeled])
+    estimator = model.factory()
+    fit_args = {}
+    if model.semi_supervised:
+        fit_args["X_unlabeled"] = preprocessor.transform(X.iloc[unlabeled])
+    if model.uses_source:
+        fit_args["groups"] = source.iloc[train_labeled].to_numpy()
+    if model.study_weights:
+        fit_args["sample_weight"] = study_sample_weights(source.iloc[train_labeled])
+    estimator.fit(preprocessor.transform(X.iloc[train_labeled]), y.iloc[train_labeled], **fit_args)
+    return preprocessor, estimator
+
+
+def predict_rows(model: ModelSpec, preprocessor, estimator, X_rows: pd.DataFrame, source_rows: pd.Series) -> np.ndarray:
+    predict_args = {"groups": source_rows.to_numpy()} if model.uses_source else {}
+    return np.asarray(estimator.predict(preprocessor.transform(X_rows), **predict_args))
+
+
 def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARGETS) -> pd.DataFrame:
     """One row per (target, protocol, fold) with the metrics of METRICS on the labeled test rows."""
     rows = []
@@ -130,20 +150,9 @@ def evaluate_model(df: pd.DataFrame, model: ModelSpec, folds: dict, targets=TARG
                 train_labeled, test_labeled = train[labeled[train]], test[labeled[test]]
                 if len(test_labeled) < min_test:
                     continue
-                preprocessor = build_preprocessor(model.family, spec, clip=model.clip, options=model.options).fit(X.iloc[train_labeled])
-                estimator = model.factory()
-                X_train = preprocessor.transform(X.iloc[train_labeled])
                 unlabeled = train[~labeled[train]]
-                fit_args = {}
-                if model.semi_supervised:
-                    fit_args["X_unlabeled"] = preprocessor.transform(X.iloc[unlabeled])
-                if model.uses_source:
-                    fit_args["groups"] = source.iloc[train_labeled].to_numpy()
-                if model.study_weights:
-                    fit_args["sample_weight"] = study_sample_weights(source.iloc[train_labeled])
-                estimator.fit(X_train, y.iloc[train_labeled], **fit_args)
-                predict_args = {"groups": source.iloc[test_labeled].to_numpy()} if model.uses_source else {}
-                predicted = np.asarray(estimator.predict(preprocessor.transform(X.iloc[test_labeled]), **predict_args))
+                preprocessor, estimator = fit_fold(model, spec, X, y, source, train_labeled, unlabeled)
+                predicted = predict_rows(model, preprocessor, estimator, X.iloc[test_labeled], source.iloc[test_labeled])
                 truth = y.iloc[test_labeled].to_numpy()
                 rows.append({
                     "model": model.name, "target": target, "protocol": protocol, "fold": k,

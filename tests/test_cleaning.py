@@ -437,3 +437,86 @@ def test_evaluation_records_the_chosen_hyperparameters(clean):
     plain = evaluate_model(clean, ModelSpec("mean", "tree", __import__("sklearn.dummy", fromlist=["x"]).DummyRegressor),
                            {"loso": make_folds(clean, "loso")}, ["yield_strength_mpa"])
     assert plain["chosen"].isna().all()
+
+
+# ---- specifications and the conformity decision ----------------------------------
+def _spec_frame():
+    return pd.DataFrame({"yield_strength_mpa": [450.0, 380.0, 450.0, np.nan, 450.0],
+                         "uts_mpa": [520.0, 520.0, np.nan, 520.0, 520.0],
+                         "elongation_pct": [25.0, 25.0, 25.0, 25.0, 25.0],
+                         "charpy_toughness_j": [60.0, 60.0, 60.0, 60.0, 20.0],
+                         "charpy_temp_c": [-50.0, -50.0, -50.0, -50.0, -20.0]})
+
+
+def test_measured_conformity_is_three_valued():
+    from src.specification import CONFORMING, NON_CONFORMING, UNKNOWN, get_specification
+    result = get_specification("AWS A5.1 E7018-1").conformity(_spec_frame()).tolist()
+    # row 0 passes, row 1 fails the yield, rows 2 and 3 miss a property, row 4 fails Charpy at a warmer temperature
+    assert result == [CONFORMING, NON_CONFORMING, UNKNOWN, UNKNOWN, NON_CONFORMING]
+
+
+def test_charpy_result_only_proves_what_the_temperature_allows():
+    from src.specification import CONFORMING, NON_CONFORMING, UNKNOWN, Requirement, Specification
+    spec = Specification("t", (Requirement("charpy_toughness_j", minimum=27, test_temperature_c=-40),), "", "", "illustrative")
+    frame = pd.DataFrame({"charpy_toughness_j": [50.0, 50.0, 10.0, 10.0],
+                          "charpy_temp_c": [-60.0, -20.0, -20.0, -60.0]})
+    # passes colder than required: proven; passes warmer: unknown; fails warmer: refuted; fails colder: unknown
+    assert spec.conformity(frame).tolist() == [CONFORMING, UNKNOWN, NON_CONFORMING, UNKNOWN]
+    assert spec.conditions() == {"charpy_temp_c": -40}
+
+
+def test_decision_uses_the_whole_interval_and_asks_for_missing_properties():
+    from src.specification import CONFORMING, NON_CONFORMING, TO_MEASURE, TO_TEST, get_specification
+    spec = get_specification("AWS A5.1 E7018-1")
+    sure = {"yield_strength_mpa": (420, 480), "uts_mpa": (500, 560), "charpy_toughness_j": (30, 60)}
+    decision = spec.decide(sure)
+    assert decision.by_target["elongation_pct"] == TO_MEASURE and decision.overall == TO_TEST
+    assert spec.decide({**sure, "elongation_pct": (23, 27)}).overall == CONFORMING
+    assert spec.decide({**sure, "elongation_pct": (23, 27), "yield_strength_mpa": (380, 420)}).by_target["yield_strength_mpa"] == TO_TEST
+    assert spec.decide({**sure, "yield_strength_mpa": (300, 390)}).overall == NON_CONFORMING
+
+
+def test_registry_specifications_are_documented_and_use_known_targets():
+    from src.config import TARGETS
+    from src.specification import SPECIFICATIONS, STATUSES
+    assert len(SPECIFICATIONS) >= 4
+    for spec in SPECIFICATIONS.values():
+        assert spec.status in STATUSES and spec.source and set(spec.targets) <= set(TARGETS)
+    assert SPECIFICATIONS["AWS A5.1 E7018-1"].requirements[-1].test_temperature_c == -45
+
+
+# ---- intervals calibrated by study and the decision table ------------------------
+def _toy_predictions():
+    rows = []
+    for study, offset in (("a", 1.0), ("b", 2.0), ("c", 3.0), ("d", 4.0)):
+        for i in range(5):
+            rows.append({"row": len(rows), "target": "uts_mpa", "study": study, "truth": 500.0 + i,
+                         "prediction": 500.0 + i - offset, "override_c": np.nan})
+    return pd.DataFrame(rows)
+
+
+def test_study_quantiles_use_only_the_other_studies_and_weigh_each_study_the_same():
+    from src.decision import study_quantiles
+    quantiles = study_quantiles(_toy_predictions(), level=0.5).set_index("study")["quantile"]
+    # held out "a": the other residuals are 2, 3, 4 (one third of the weight each); the level 0.5 * 4/3 = 0.67 gives 3
+    assert quantiles["a"] == 3.0 and quantiles["d"] == 2.0
+    # a study with many welds does not outweigh the others
+    crowded = pd.concat([_toy_predictions(), _toy_predictions().query("study == 'b'").assign(row=lambda t: t["row"] + 100)])
+    assert study_quantiles(crowded, level=0.5).set_index("study").loc["a", "quantile"] == 3.0
+
+
+def test_intervals_coverage_and_decision_rule():
+    from src.decision import add_intervals, decide_welds, decision_report, interval_coverage, study_quantiles
+    from src.specification import CONFORMING, NON_CONFORMING, TO_TEST, Requirement, Specification
+    predictions = _toy_predictions()
+    intervals = add_intervals(predictions, study_quantiles(predictions, level=1.0))
+    coverage = interval_coverage(intervals)
+    assert (coverage["coverage"] <= 1).all() and (coverage["width"] > 0).all()
+    spec = Specification("t", (Requirement("uts_mpa", minimum=500.0),), "", "", "illustrative")
+    df = pd.DataFrame({"uts_mpa": predictions["truth"].to_numpy(), "source": predictions["study"].to_numpy()}, index=predictions["row"])
+    decisions = decide_welds(df, intervals, spec)
+    assert set(decisions["decision"]) <= {CONFORMING, NON_CONFORMING, TO_TEST}
+    point = decide_welds(df, intervals, spec, point=True)
+    assert TO_TEST not in set(point["decision"])                  # a point has no uncertainty to straddle the threshold
+    report = decision_report(decisions, spec.conformity(df), df["source"])
+    assert report.loc[0, "study"] == "all" and report.loc[0, "welds"] == len(df)

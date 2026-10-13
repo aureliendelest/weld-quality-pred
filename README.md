@@ -95,6 +95,7 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 │   ├── 01_exploration.ipynb         # raw data, frozen
 │   ├── 02_preprocessing_pca.ipynb   # cleaning effects and PCA
 │   ├── 03_supervised_models.ipynb   # baselines, per-study scores, feature-set ablations (started)
+│   ├── 06_quality_decision.ipynb    # conformal intervals by study, conforming / to test / non conforming against a specification
 │   ├── 04_semi_supervised.ipynb     # planned
 │   └── 05_comparison_recommendations.ipynb   # planned
 ├── results/                    # CSV tables written by the notebooks, one subfolder per notebook
@@ -107,6 +108,8 @@ Raw data ──► Cleaning & handling of "N" ──► Exploratory analysis & P
 │   ├── baselines.py            # global-mean and study-mean reference predictors
 │   ├── models.py               # study-tuned ridge, GroupTunedSearch (any regressor tuned by CV over studies)
 │   ├── zoo.py                  # classical regressors, small grids, paired comparison against a reference
+│   ├── specification.py        # thresholds of a weld class (ISO 2560-A, AWS A5.1) and the conforming / to-test decision
+│   ├── decision.py             # leave-one-study-out predictions, intervals calibrated by study, decision report
 │   ├── ablation.py             # feature-set ablations and the paired decision rule
 │   ├── semi_supervised.py      # pseudo-labeling regressor
 │   └── analysis.py             # within-study correlations, PCA helpers
