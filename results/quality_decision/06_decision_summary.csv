@@ -1,0 +1,11 @@
+specification,rule,welds,true_conforming,called_conforming,false_accepts,to_test,called_non_conforming,false_rejects,share conforming (base rate),precision of 'conforming',precision of 'non conforming'
+ISO 2560-A E42 4,interval,335,34,0,0,335,0,0,0.1,,
+ISO 2560-A E42 4,point,335,34,115,81,85,135,0,0.1,0.3,1.0
+AWS A5.1 E7018,interval,548,392,0,0,548,0,0,0.72,,
+AWS A5.1 E7018,point,548,392,523,133,0,25,2,0.72,0.75,0.92
+AWS A5.1 E7018-1,interval,214,29,0,0,214,0,0,0.14,,
+AWS A5.1 E7018-1,point,214,29,107,78,84,23,0,0.14,0.27,1.0
+AWS A5.1 E6010,interval,547,445,16,1,531,0,0,0.81,0.94,
+AWS A5.1 E6010,point,547,445,525,82,0,22,2,0.81,0.84,0.91
+AWS A5.1 E6013,interval,543,524,352,9,191,0,0,0.97,0.97,
+AWS A5.1 E6013,point,543,524,543,19,0,0,0,0.97,0.97,

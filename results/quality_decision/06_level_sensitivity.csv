@@ -1,0 +1,7 @@
+level,specification,welds,true_conforming,called_conforming,false_accepts,to_test,called_non_conforming,false_rejects
+0.5,AWS A5.1 E7018,548,392,317,51,231,0,0
+0.5,AWS A5.1 E6013,543,524,543,19,0,0,0
+0.8,AWS A5.1 E7018,548,392,0,0,548,0,0
+0.8,AWS A5.1 E6013,543,524,352,9,191,0,0
+0.9,AWS A5.1 E7018,548,392,0,0,548,0,0
+0.9,AWS A5.1 E6013,543,524,0,0,543,0,0
