@@ -16,7 +16,7 @@
 3. [Méthodes de Machine Learning retenues et Protocole de Validation](#3-méthodes-de-machine-learning-retenues-et-protocole-de-validation)
 4. [Résultats numériques et Analyse comparative des performances](#4-résultats-numériques-et-analyse-comparative-des-performances)
 5. [Recommandations métallurgiques et industrielles pour l'obtention de soudures saines](#5-recommandations-métallurgiques-et-industrielles-pour-lobtention-de-soudures-saines)
-6. [Discussion, Limites de l'étude et Organisation (Diagramme de GANTT)](#6-discussion-limites-de-létude-et-organisation-diagramme-de-gantt)
+6. [Discussion, Limites de l'étude et Organisation du travail](#6-discussion-limites-de-létude-et-organisation-du-travail)
 7. [Références bibliographiques](#7-références-bibliographiques)
 
 ---
@@ -78,9 +78,16 @@ Un découpage aléatoire standard (*KFold random*) est trompeur : les soudures d
 
 Nous avons standardisé l'évaluation autour du protocole **`loso` (Leave-One-Study-Out)** : à chaque pli, une étude entière (parmi les 15 études majeures ayant au moins 10 soudures) est tenue à l'écart comme test.
 
-#### La métrique de référence : le `Skill`
-Le $R^2$ classique compare l'erreur quadratique à la variance du pli de test : sur une étude tenue à l'écart avec un décalage moyen, un prédicteur trivial qui prédit la moyenne d'entraînement $\bar{y}_{\text{train}}$ obtient un $R^2$ fortement négatif (-0.37 à -2.9). Nous mesurons donc le **`Skill Score`** :
-$$\text{Skill} = 1 - \frac{\sum_{i \in \text{test}} (y_i - \hat{y}_i)^2}{\sum_{i \in \text{test}} (y_i - \bar{y}_{\text{train}})^2} = 1 - \frac{\text{SSE}(\text{modèle})}{\text{SSE}(\text{moyenne train})}$$
+#### La métrique de référence : le Skill
+
+Le coefficient $R^2$ classique compare l'erreur quadratique à la variance du pli de test. Sur une étude tenue à l'écart avec un décalage moyen de laboratoire, un prédicteur trivial qui prédit simplement la moyenne d'entraînement $\bar{y}_{\text{train}}$ obtient un $R^2$ fortement négatif (-0.37 à -2.9).
+
+Nous mesurons donc le **Skill Score** par rapport à cette référence :
+
+$$
+\text{Skill} = 1 - \frac{\sum_{i \in \text{test}} (y_i - \hat{y}_i)^2}{\sum_{i \in \text{test}} (y_i - \bar{y}_{\text{train}})^2} = 1 - \frac{\text{SSE}(\text{modèle})}{\text{SSE}(\text{moyenne train})}
+$$
+
 * $\text{Skill} = 0$ : le modèle n'apporte aucune valeur ajoutée par rapport à la moyenne globale d'apprentissage.
 * $\text{Skill} > 0$ : réduction réelle de l'erreur quadratique sur une étude inconnue.
 
@@ -185,37 +192,14 @@ Sur la base des analyses d'importance de variables, des corrélations intra-étu
 
 ---
 
-## 6. Discussion, Limites de l'étude et Organisation (Diagramme de GANTT)
+## 6. Discussion, Limites de l'étude et Organisation du travail
 
 ### 6.1. Limites méthodologiques
 * **Discrétisation de Charpy** : L'existence de paliers d'énergie imposés (28, 50, 100 J) suggère qu'une reformulation prédisant la température de transition ductile-fragile serait physiquement plus robuste.
 * **Volume d'études limitant** : Avec 15 études complètes en LOSO, l'estimation des intervalles de confiance de conformité reste sensible aux études de petite taille.
 
-### 6.2. Répartition des tâches et Diagramme de GANTT
+### 6.2. Répartition des tâches et volume de travail
 Le projet a fait l'objet d'un partage équitable et rigoureux des responsabilités (**20 heures de travail au total**, réparties en 10h pour Antoine et 10h pour Aurélien) :
-
-```mermaid
-gantt
-    title Répartition des Tâches et Calendrier du Projet (Total : 20h)
-    dateFormat  YYYY-MM-DD
-    section Phase 1 : Données & Exploration
-    Exploration descriptive & analyse des NaN (Antoine - 2h)    :done, a1, 2026-09-20, 2d
-    Pipeline de chargement & règles de source (Aurélien - 1.5h) :done, a2, 2026-09-21, 2d
-    section Phase 2 : Preprocessing & ACP
-    Typage, censurage x/2 et corrections (Aurélien - 2h)        :done, b1, 2026-09-23, 2d
-    Analyses en Composantes Principales 1-4 (Aurélien - 1.5h)   :done, b2, 2026-09-25, 2d
-    section Phase 3 : Modélisation Supervisée
-    Baselines & Ridge pénalisé GroupTuned (Aurélien - 1.5h)     :done, c1, 2026-09-27, 2d
-    Zoo supervisé & optimisation CatBoost / HistGB (Aurélien - 2h) :done, c2, 2026-09-29, 3d
-    section Phase 4 : Modélisation Semi-Supervisée
-    Évaluation étanche (LOSO) et métrique Skill (Antoine - 1.5h) :done, d1, 2026-10-02, 2d
-    Recherche biblio & formalisation (Antoine - 1.5h)           :done, d2, 2026-10-04, 2d
-    Implémentation PseudoLabel & CoTraining (Antoine - 2h)      :done, d3, 2026-10-06, 2d
-    Benchmark semi-supervisé & sensibilité (Antoine - 1.5h)     :done, d4, 2026-10-08, 2d
-    section Phase 5 : Décision Qualité & Synthèse
-    Moteur de décision conforme AWS/ISO (Aurélien - 1.5h)       :done, e1, 2026-10-10, 2d
-    Rédaction du Rapport Final & Synthèse (Antoine - 1.5h)      :done, e2, 2026-10-12, 2d
-```
 
 | Tâche | Responsable | Durée | Livrable associé |
 | :--- | :---: | :---: | :--- |
